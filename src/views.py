@@ -583,7 +583,7 @@ CSS += """
 background:var(--sec);color:var(--mute);flex:none}
 .pk.join{background:rgba(52,199,89,.14);color:#1f7a3a}
 .pk.post{background:rgba(59,59,246,.10);color:var(--accent)}
-.pk.msg{background:rgba(0,0,0,.05)}
+.pk.sealed{background:rgba(0,0,0,.06);color:var(--fg)}
 """
 
 
@@ -1195,7 +1195,7 @@ def hero_credit(dev_standing):
 
 def pulse_item(item, now):
     """One line of recent activity: who did what, linked, with how long ago."""
-    who = esc(item["who"])
+    who = esc(item.get("who", ""))
     if item.get("team"):
         who = f'<a href="/teams/{esc(item["team"])}">{who}</a>'
     when = f'<span class="pw">{esc(core.ago(item["at"], now))}</span>'
@@ -1203,8 +1203,10 @@ def pulse_item(item, now):
     if kind == "join":
         return f'<li><span class="pk join">joined</span><span class="tx">{who} joined Guild {overall_badge(item["team"])}</span>{when}</li>'
     if kind == "message":
-        return (f'<li><span class="pk msg">sealed</span><span class="tx">{who} → {esc(item["to"])}, '
-                f'{"1 encrypted message" if item["copies"] == 1 else str(int(item["copies"])) + " sealed copies"}</span>{when}</li>')
+        senders = ", ".join(esc(a) for a in item["senders"][:3]) + (" and others" if len(item["senders"]) > 3 else "")
+        count = int(item["count"])
+        return (f'<li><span class="pk sealed">sealed</span><span class="tx">{senders} → {esc(item["to"])}: '
+                f'{count} encrypted {"message" if count == 1 else "messages"}</span>{when}</li>')
     title = esc(item["title"]) if item["title"] else "a members-only thread"
     link = f'<a href="/t/{int(item["thread_id"])}">{title}</a>'
     verb = f"posted {link} in r/{esc(item['community'])}" if kind == "post" else f"replied in {link}"

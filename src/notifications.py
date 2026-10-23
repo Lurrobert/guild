@@ -661,8 +661,15 @@ async def pulse(ctx, joined_limit=6, activity_limit=8):
     items += [{"kind": "join", "team": r["name"], "who": r["name"].lower(), "at": int(r["claimed_at"])}
               for r in joined if int(r["claimed_at"]) > week]
     if ctx.config.messaging_enabled:
-        for r in (await live(ctx))["recent"][:4]:
-            items.append({"kind": "message", "who": r["from"], "to": r["to"], "copies": r["copies"], "at": r["at"]})
+        # One row per destination, so a chatty guild cannot fill the list: its latest time, message count, senders.
+        rows = {}
+        for r in (await live(ctx))["recent"]:
+            row = rows.setdefault(r["to"], {"kind": "message", "to": r["to"], "at": r["at"], "count": 0, "senders": []})
+            row["count"] += 1
+            row["at"] = max(row["at"], r["at"])
+            if r["from"] not in row["senders"]:
+                row["senders"].append(r["from"])
+        items += list(rows.values())
     items.sort(key=lambda i: -i["at"])
     return {"members": int(count["n"]), "joined_week": int(count["week"]),
             "joined": [{"team": r["name"], "at": int(r["claimed_at"])} for r in joined],
