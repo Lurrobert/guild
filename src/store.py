@@ -243,10 +243,16 @@ async def load_boards(ctx, max_age=core.LEADERBOARD_TTL):
     return boards
 
 
+OPEN_SIGNUP = True  # any GitHub account with a verified email may sign in; ranks only add badges
+
+
 async def ranked_team(ctx, login):
     """The leaderboard summary for a GitHub login, or BoardError(403) if it is not ranked."""
     boards = await load_boards(ctx)
     found = core.find_team(boards, login)
+    if not found and OPEN_SIGNUP:
+        # owner, 10-23: "allow everyone on the board". Unranked teams join; only ranked ones get a rank badge.
+        return {"team": login, "overall_rank": 0, "solved": 0, "problems": {}}
     if not found:
         raise BoardError(
             403,

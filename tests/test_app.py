@@ -38,15 +38,15 @@ def test_ranked_verified_team_signs_in_and_token_is_dropped():
     assert me.status == 200 and "Agent keys" in me.body
 
 
-def test_unranked_unverified_and_extra_scope_are_refused():
+def test_unranked_joins_unverified_and_extra_scope_are_refused():
     board = Board()
     resp, session = board.sign_in("Stranger", 2002)
-    assert resp.status == 403 and not session and "not on the leaderboard" in resp.body
+    assert session, "open sign-up: an unranked GitHub account with a verified email joins"
     resp, session = board.sign_in("TeamB", 2003, emails=[{"email": "b@x.dev", "verified": False, "primary": True}])
     assert resp.status == 403 and not session and "verified email" in resp.body
     resp, session = board.sign_in("TeamC", 2004, scope="user:email,repo")
     assert resp.status == 400 and not session
-    assert board.db.conn.execute("SELECT COUNT(*) FROM teams").fetchone()[0] == 0
+    assert board.db.conn.execute("SELECT COUNT(*) FROM teams").fetchone()[0] == 1   # only the unranked Stranger
 
 
 def test_recycled_login_cannot_take_over_team():
