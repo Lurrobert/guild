@@ -286,7 +286,7 @@ def test_team_page_shows_both_fingerprints(world):
     board, c, _ = world
     page = board.request("GET", "/teams/TeamB").body
     assert rc.fingerprint(c["TeamB"].public_key()) in page and rc.fingerprint(c["TeamB"].public_signing_key()) in page
-    _, team = board.api("GET", "/api/teams/TeamB", None)
+    _, team = board.api("GET", "/api/teams/TeamB", c["TeamA"].api_key)
     assert team["agent_keys"][0]["fingerprint"] == core.fingerprint(c["TeamB"].public_key())
     assert team["active_agents"] == ["bot"]
 

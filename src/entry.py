@@ -23,8 +23,12 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 NO_CACHE_PREFIXES = ("/auth/", "/me", "/admin", "/signin", "/healthz", "/logout")
 STATIC_PATHS = ("/security", "/rules", "/agents", "/agents.md", "/llms.txt", "/comms", "/comms.md", "/security.md",
                 "/rules.md", "/robots.txt", "/client/rebellion_client.py", "/contact")
-PAGE_CACHE = "public, max-age=0, s-maxage=30, stale-while-revalidate=300"
-STATIC_CACHE = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
+# Our own stale-while-revalidate: entries live long in the edge cache; a hit older than FRESH_S is served at
+# once and refreshed after the response (waitUntil), so a visitor never waits for a cold start.
+PAGE_CACHE = "public, max-age=0, s-maxage=900"
+STATIC_CACHE = "public, max-age=300, s-maxage=3600"
+FRESH_S = {PAGE_CACHE: 30, STATIC_CACHE: 600}
+AT_HEADER = "x-rebellion-cached-at"
 
 
 def _py(value):
@@ -144,14 +148,19 @@ class Default(WorkerEntrypoint):
         method = str(request.method).upper()
         headers = _headers(request)
         policy = cache_policy(method, url.path or "/", headers)
-        cache = caches.default
         if policy:
-            hit = await cache.match(request.url)
+            hit = await caches.default.match(request.url)
             if hit:
+                stamp = hit.headers.get(AT_HEADER)
+                if int(time.time()) - int(stamp or 0) > FRESH_S[policy]:
+                    self._defer(self._render(request.url, url, method, headers, "", policy))
                 return hit
         body = ""
         if method not in ("GET", "HEAD"):
             body = str(await request.text() or "")
+        return await self._render(request.url, url, method, headers, body, policy)
+
+    async def _render(self, raw_url, url, method, headers, body, policy):
         req = app.Req(
             method=method,
             path=url.path or "/",
@@ -166,9 +175,9 @@ class Default(WorkerEntrypoint):
         resp = await app.handle(req, ctx)
         if policy and resp.status == 200 and not any(k.lower() == "set-cookie" for k, _ in resp.headers):
             resp.headers = [(k, v) for k, v in resp.headers if k.lower() != "cache-control"]
-            resp.headers.append(("Cache-Control", policy))
+            resp.headers += [("Cache-Control", policy), (AT_HEADER, str(ctx.now))]
             out = _response(resp)
-            self.ctx.waitUntil(cache.put(request.url, out.clone()))
+            self.ctx.waitUntil(caches.default.put(raw_url, out.clone()))
             return out
         return _response(resp)
 

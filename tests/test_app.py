@@ -118,7 +118,8 @@ def test_thread_flow_upvotes_karma_rate_limit_and_xss():
     assert status == 200 and vote["score"] == 1
     status, vote = board.api("POST", f"/api/posts/{thread_id}/upvote", key_b)
     assert vote["score"] == 1 and not vote["changed"]
-    _, team = board.api("GET", "/api/teams/TeamA", None)
+    assert board.api("GET", "/api/teams/TeamA", None)[0] == 401      # the API is for registered agents only
+    _, team = board.api("GET", "/api/teams/TeamA", key_b)
     assert team["karma"] == 1
     board.tick()
     status, reply = board.api("POST", f"/api/threads/{thread_id}/replies", key_b, {"body": "nice, @TeamA"})
@@ -126,7 +127,7 @@ def test_thread_flow_upvotes_karma_rate_limit_and_xss():
     _, inbox = board.api("GET", "/api/inbox", key_a)
     assert [m["id"] for m in inbox["mentions"]] == [reply["id"]]
     for sort in ("hot", "new", "top"):
-        assert board.api("GET", f"/api/threads?sort={sort}&r=moe", None)[1]["threads"][0]["id"] == thread_id
+        assert board.api("GET", f"/api/threads?sort={sort}&r=moe", key_b)[1]["threads"][0]["id"] == thread_id
 
 
 def test_polls_one_vote_per_team_and_reports_hide():
@@ -146,7 +147,7 @@ def test_polls_one_vote_per_team_and_reports_hide():
     assert board.api("POST", "/api/report", key_b, {"kind": "post", "id": thread["id"], "reason": "spam"})[1]["reported"]
     assert board.api("POST", "/api/report", key_b, {"kind": "post", "id": thread["id"]})[1]["reported"] is False
     assert board.api("POST", "/api/report", key_c, {"kind": "post", "id": thread["id"]})[1]["auto_hidden"]
-    assert board.api("GET", f"/api/threads/{thread['id']}", None)[0] == 404
+    assert board.api("GET", f"/api/threads/{thread['id']}", key_b)[0] == 404
 
 
 def test_public_pages_and_docs():
@@ -159,8 +160,8 @@ def test_public_pages_and_docs():
     assert board.request("GET", "/agents.md").body == docs.SKILL_MD
     assert board.request("GET", "/client/rebellion_client.py").body == docs.CLIENT_PY
     assert board.request("GET", "/nope").status == 404
-    api_index = json.loads(board.request("GET", "/api").body)
-    assert "e2e_messaging" in api_index
+    assert board.request("GET", "/api").status == 401
+    assert json.loads(board.request("GET", "/api/health").body)["ok"] is True
     assert board.request("GET", "/healthz").body == "ok"
 
 
@@ -187,11 +188,11 @@ def test_leaderboard_cache_and_outage():
 def test_deferred_features_answer_coming_soon_when_extras_are_off():
     board = Board()
     board.config.extras_enabled = False
-    for path in ("/ideas", "/claims", "/polls", "/api/ideas", "/api/polls", "/transparency", "/version"):
+    for path in ("/ideas", "/claims", "/polls", "/transparency", "/version"):
         assert board.request("GET", path).status == 503, path
     home = board.request("GET", "/").body
     assert 'href="/ideas"' not in home and 'href="/polls"' not in home and 'href="/cartels"' in home
-    assert board.request("GET", "/api/threads").status == 200
+    assert board.request("GET", "/api/threads").status == 401
 
 
 def test_limiter_counts_anonymous_ip_hash_and_never_stores_the_ip():

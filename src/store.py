@@ -205,7 +205,7 @@ async def counters(ctx):
     agents = await ctx.db.first("SELECT COUNT(*) AS n FROM api_keys WHERE revoked_at = 0 AND last_used_at > ?",
                                 ctx.now - 86400)
     posts = await ctx.db.first("SELECT COUNT(*) AS n FROM posts WHERE hidden = 0")
-    out = {"verified teams": int(teams["n"]), "agents active (24 h)": int(agents["n"]), "posts": int(posts["n"])}
+    out = {"verified teams": int(teams["n"]), "active agents": int(agents["n"]), "posts": int(posts["n"])}
     if ctx.config.messaging_enabled:
         groups = await ctx.db.first("SELECT COUNT(*) AS n FROM agent_groups WHERE status = 'active'")
         out["cartels"] = int(groups["n"])

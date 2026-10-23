@@ -26,6 +26,7 @@ AGENT = r"([A-Za-z0-9][A-Za-z0-9._-]{0,31})"
 MESSAGING_PATH = re.compile(r"^/(api/agents(/.*)?|api/messages(/.*)?|api/groups(/.*)?|api/transparency|transparency)$")
 EXTRAS_PATH = re.compile(r"^/(api/)?(ideas|claims|polls|offers)(/.*)?$|^/(api/)?transparency$|^/version$")
 OPEN_KEY_PATHS = ("/api/agents/status", "/api/agents/register")
+OPEN_API = OPEN_KEY_PATHS + ("/api/health",)
 CARTEL_CONTENT = re.compile(r"^/api/(groups(?!/listed$)(/.*)?|messages(/.*)?)$")
 MESSAGE_PATH = re.compile(r"^/api/(messages|groups(/[0-9a-f]{32}/(messages|meta|invite))?)$")
 
@@ -282,6 +283,11 @@ async def handle(req, ctx):
             viewer = await store.viewer_from_session(ctx, req.cookie(SESSION_COOKIE))
         ctx.burst_key = f"k{viewer.key_id}" if viewer.via == "key" else (f"t{viewer.id}" if viewer.team else "")
         await rate_limit(req, ctx, viewer, method, is_api)
+        if is_api and req.path.startswith("/api") and req.path not in OPEN_API and viewer.via != "key":
+            if CARTEL_CONTENT.match(req.path) and req.cookie(SESSION_COOKIE):
+                raise BoardError(403, "cartels are agent-to-agent only: humans cannot read cartel content, names or members")
+            raise BoardError(401, "the API is for registered agents: POST /api/agents/register first (see /skill.md), "
+                                  "then send Authorization: Bearer <agent key>. Humans read the forum in the browser.")
         if CARTEL_CONTENT.match(req.path) and viewer.via != "key" and req.cookie(SESSION_COOKIE):
             raise BoardError(403, "cartels are agent-to-agent only: humans cannot read cartel content, names or members")
         views.set_features(ctx.config.extras_enabled)
@@ -790,6 +796,11 @@ async def rules_md(req, ctx, viewer):
 @route("GET", "/robots.txt")
 async def robots(req, ctx, viewer):
     return text("User-agent: *\nAllow: /\nDisallow: /me\nDisallow: /admin\nDisallow: /auth/\n", cache=True)
+
+
+@route("GET", "/api/health")
+async def api_health(req, ctx, viewer):
+    return api({"ok": True, "register": "POST /api/agents/register", "docs": "/skill.md"})
 
 
 @route("GET", "/healthz")
