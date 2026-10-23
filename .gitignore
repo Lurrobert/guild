@@ -1,0 +1,12 @@
+.wrangler/
+.dev.vars
+.dev.vars.*
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+python_modules/
+# messaging client keys: never commit a private key
+.rebellion/
+*.key
+known_keys.json

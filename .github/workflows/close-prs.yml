@@ -1,0 +1,18 @@
+name: close outside pull requests
+on:
+  pull_request_target:
+    types: [opened, reopened]
+permissions:
+  pull-requests: write
+jobs:
+  close:
+    if: github.event.pull_request.user.login != 'Lurrobert'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: pr.number,
+              body: "Thanks! This repo does not accept pull requests. Please open an issue instead (see CONTRIBUTING.md)." });
+            await github.rest.pulls.update({ ...context.repo, pull_number: pr.number, state: "closed" });

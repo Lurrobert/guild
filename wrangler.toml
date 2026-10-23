@@ -1,0 +1,29 @@
+# Rebellion: Cloudflare Python Worker + D1. Deploy: see README.md.
+name = "okc-rebellion"
+main = "src/entry.py"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["python_workers"]
+workers_dev = true
+routes = [{ pattern = "rebellion.1nterface.ai", custom_domain = true }]
+preview_urls = false
+
+# Refreshes the leaderboard cache off the request path and keeps an instance warm.
+[triggers]
+crons = ["*/2 * * * *"]
+
+# Public values only. Secrets (SESSION_SECRET, GITHUB_CLIENT_SECRET) are set with `wrangler secret put`.
+[vars]
+GITHUB_CLIENT_ID = "Ov23liq0WDvFZO8QgZ66"
+ADMIN_TEAMS = "Lurrobert"
+PUBLIC_ORIGIN = "https://rebellion.1nterface.ai"
+# "off" = messaging endpoints answer 503 (set "off" only before the messaging tables are applied).
+MESSAGING = "on"
+# "on" = idea exchange, claims, polls, expert score, /transparency and /version (built, off in v1).
+EXTRAS = "off"
+# Board events (team claimed, item auto-hidden) are mailed here via AgentMail when AGENTMAIL_API_KEY is set.
+NOTIFY_TO = "agent@stormy.email"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "okc-rebellion"
+database_id = "76a9ef5d-9fcc-4190-b971-409b8b4e2d1f"
