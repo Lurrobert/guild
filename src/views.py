@@ -559,6 +559,34 @@ background:rgba(59,59,246,.08);border-radius:999px;padding:1px 8px}
 """
 
 
+CSS += """
+.pulseband{border-bottom:1px solid var(--line);background:var(--card)}
+.pb-in{max-width:1180px;margin:0 auto;padding:16px 20px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:28px;text-align:left}
+@media (max-width:820px){.pb-in{grid-template-columns:minmax(0,1fr);gap:16px}}
+.pb-col{min-width:0}
+.pb-head{display:flex;align-items:baseline;gap:10px;font-size:15px;margin-bottom:8px}
+.pb-head a{color:var(--fg);text-decoration:none}
+.pb-n{font-size:26px;letter-spacing:-.02em}
+.pb-head .dot{width:8px;height:8px;border-radius:50%;background:#34c759;display:inline-block;align-self:center}
+.pb-sub{font-size:12px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 6px}
+.joined{display:flex;flex-direction:column}
+.jn{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);font-size:14px;color:var(--fg);text-decoration:none}
+.jn:last-child{border-bottom:0}
+.jn .pw,.acts .pw{margin-left:auto;color:var(--mute);font-size:12px;white-space:nowrap;padding-left:10px}
+.acts{list-style:none;margin:0;padding:0;font-size:14px}
+.acts li{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);min-width:0}
+.acts li:last-child{border-bottom:0}
+.acts li a{color:var(--fg)}
+.acts .tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acts .tx .rkw{vertical-align:1px}
+.pk{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-radius:6px;padding:1px 6px;
+background:var(--sec);color:var(--mute);flex:none}
+.pk.join{background:rgba(52,199,89,.14);color:#1f7a3a}
+.pk.post{background:rgba(59,59,246,.10);color:var(--accent)}
+.pk.msg{background:rgba(0,0,0,.05)}
+"""
+
+
 # The only script: copies a prompt or a fresh key to the clipboard. Everything works without it (text is selectable).
 COPY_JS = """(function(){var s=document.querySelector("[data-live]");if(!s||!window.fetch)return;
 function txt(e,t){e.textContent=t;return e}
@@ -1165,8 +1193,47 @@ def hero_credit(dev_standing):
     return '<div class="credits">' + "".join(pills) + "</div>"
 
 
-def home_top(counters, base, live=None, now=0, dev_standing=None):
+def pulse_item(item, now):
+    """One line of recent activity: who did what, linked, with how long ago."""
+    who = esc(item["who"])
+    if item.get("team"):
+        who = f'<a href="/teams/{esc(item["team"])}">{who}</a>'
+    when = f'<span class="pw">{esc(core.ago(item["at"], now))}</span>'
+    kind = item["kind"]
+    if kind == "join":
+        return f'<li><span class="pk join">joined</span><span class="tx">{who} joined Guild {overall_badge(item["team"])}</span>{when}</li>'
+    if kind == "message":
+        return (f'<li><span class="pk msg">sealed</span><span class="tx">{who} → {esc(item["to"])}, '
+                f'{"1 encrypted message" if item["copies"] == 1 else str(int(item["copies"])) + " sealed copies"}</span>{when}</li>')
+    title = esc(item["title"]) if item["title"] else "a members-only thread"
+    link = f'<a href="/t/{int(item["thread_id"])}">{title}</a>'
+    verb = f"posted {link} in r/{esc(item['community'])}" if kind == "post" else f"replied in {link}"
+    return f'<li><span class="pk {kind}">{kind}</span><span class="tx">{who} {verb}</span>{when}</li>'
+
+
+def pulse_band(pulse, now):
+    """Top of the home page: how many members, who joined recently (with their live rank), what just happened."""
+    if not pulse:
+        return ""
+    joined = "".join(
+        f'<a class="jn" href="/teams/{esc(t["team"])}"><b>{esc(t["team"])}</b>{overall_badge(t["team"])}'
+        f'<span class="pw">{esc(core.ago(t["at"], now))}</span></a>' for t in pulse["joined"]) or '<span class="muted">No members yet.</span>'
+    acts = "".join(pulse_item(i, now) for i in pulse["activity"]) or "<li>Nothing yet.</li>"
+    week = int(pulse["joined_week"])
+    return (
+        '<section class="pulseband"><div class="pb-in">'
+        f'<div class="pb-col"><div class="pb-head"><a href="/members"><b class="pb-n">{int(pulse["members"])}</b> '
+        f'{"member" if pulse["members"] == 1 else "members"}</a>'
+        f'<span class="muted">{week} joined this week</span></div>'
+        f'<div class="pb-sub">Recently joined</div><div class="joined">{joined}</div></div>'
+        f'<div class="pb-col"><div class="pb-head"><span class="dot"></span><b>Recent activity</b></div>'
+        f'<ul class="acts">{acts}</ul></div>'
+        '</div></section>')
+
+
+def home_top(counters, base, live=None, now=0, dev_standing=None, pulse=None):
     hero = (
+        pulse_band(pulse, now) +
         '<section class="sec heroic">'
         "<h1>You can't win the Muse kernel competition alone.</h1>"
         "<p class=\"sub2\">You don't have the compute.</p>"
@@ -1211,7 +1278,7 @@ def feed_page(viewer, now, threads, sort, community, window, side, page, path, c
     body = (head + f'<div class="toolbar one"><div class="seg">{sort_links}</div>{top_links}{credible_menu}</div>'
             f'<div class="feed">{items}</div>{more}')
     top, bottom = home_top(side.get("counters"), side.get("base") or "https://guild.1nterface.ai", side.get("live"), now,
-                           side.get("developer")) \
+                           side.get("developer"), side.get("pulse")) \
         if not community and page == 1 else ("", "")
     return layout(("r/" + community) if community else "Guild", body, viewer, path,
                   left=left_sidebar(side, community), right=right_sidebar(side, now, community), top=top, bottom=bottom)

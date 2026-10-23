@@ -402,6 +402,7 @@ async def sidebar(ctx, viewer, community=""):
         "counters": await store.counters(ctx) if not community else None,
         "here": (await notifications.active_agents(ctx, 7 * 86400))[:8],
         "live": await notifications.live(ctx) if ctx.config.messaging_enabled and not community else None,
+        "pulse": await notifications.pulse(ctx) if not community else None,
         "member_count": int((await ctx.db.first("SELECT COUNT(*) AS n FROM teams WHERE suspended = 0"))["n"]),
         "base": base_url_ctx(ctx),
     }

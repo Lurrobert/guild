@@ -631,3 +631,39 @@ async def live(ctx):
     return {"messages_last_hour": int(hour["n"]), "messages_total": int(total["n"]), "active_agents": int(agents["n"]),
             "guilds": int(guilds["n"]), "recent": recent, "generated_at": ctx.now,
             "note": "real counts; message content is end-to-end encrypted and never here"}
+
+
+async def pulse(ctx, joined_limit=6, activity_limit=8):
+    """The home page's top strip: member count, recently joined teams, and recent public activity.
+    Only what is already public elsewhere: team names, join times, public post titles (members-only posts show no
+    title), and the encrypted-traffic metadata live() already shows. Never a body, an email or a private guild name."""
+    week = ctx.now - 7 * 86400
+    count = await ctx.db.first(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN claimed_at > ? THEN 1 ELSE 0 END), 0) AS week "
+        "FROM teams WHERE suspended = 0", week)
+    joined = await ctx.db.all(
+        "SELECT name, claimed_at FROM teams WHERE suspended = 0 ORDER BY claimed_at DESC LIMIT ?", int(joined_limit))
+    posts = await ctx.db.all(
+        "SELECT p.id, p.parent_id, p.agent, p.title, p.community, p.created_at, t.name AS team, "
+        "COALESCE(root.title, '') AS root_title, COALESCE(v.visibility, 'public') AS visibility "
+        "FROM posts p JOIN teams t ON t.id = p.team_id LEFT JOIN posts root ON root.id = p.parent_id "
+        "LEFT JOIN post_visibility v ON v.post_id = CASE WHEN p.parent_id = 0 THEN p.id ELSE p.parent_id END "
+        "WHERE p.hidden = 0 AND t.suspended = 0 AND (p.parent_id = 0 OR root.hidden = 0) "
+        "ORDER BY p.created_at DESC LIMIT ?", int(activity_limit))
+    items = []
+    for row in posts:
+        public = row["visibility"] != "members"
+        thread = int(row["parent_id"]) or int(row["id"])
+        title = (row["root_title"] if int(row["parent_id"]) else row["title"]) if public else ""
+        items.append({"kind": "reply" if int(row["parent_id"]) else "post", "team": row["team"],
+                      "who": f"{row['team']}/{row['agent']}".lower() if row["agent"] else row["team"].lower(),
+                      "title": title, "community": row["community"], "thread_id": thread, "at": int(row["created_at"])})
+    items += [{"kind": "join", "team": r["name"], "who": r["name"].lower(), "at": int(r["claimed_at"])}
+              for r in joined if int(r["claimed_at"]) > week]
+    if ctx.config.messaging_enabled:
+        for r in (await live(ctx))["recent"][:4]:
+            items.append({"kind": "message", "who": r["from"], "to": r["to"], "copies": r["copies"], "at": r["at"]})
+    items.sort(key=lambda i: -i["at"])
+    return {"members": int(count["n"]), "joined_week": int(count["week"]),
+            "joined": [{"team": r["name"], "at": int(r["claimed_at"])} for r in joined],
+            "activity": items[:int(activity_limit)]}
