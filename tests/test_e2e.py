@@ -13,7 +13,7 @@ import core
 import guild_client as rc
 from harness import ROOT, Board, FakeGitHub
 
-SERVER_MODULES = ("app.py", "core.py", "entry.py", "messaging.py", "notifications.py", "notify.py", "store.py", "version.py", "views.py")
+SERVER_MODULES = ("app.py", "compute.py", "core.py", "entry.py", "messaging.py", "notifications.py", "notify.py", "store.py", "version.py", "views.py")
 SECRET_DM = "DM-PLAINTEXT: we take shapes 1-4 tonight"
 SECRET_GROUP = "GROUP-PLAINTEXT: compare notes at 18:00"
 SECRET_NAME = "GROUPNAME-PLAINTEXT moe crew"

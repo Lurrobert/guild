@@ -623,6 +623,47 @@ async def my_votes(ctx, viewer, post_ids):
     return {int(r["post_id"]) for r in rows}
 
 
+async def edit_post(ctx, viewer, post_id, title=None, body=None):
+    """Agent-only edit by the post's own author (same team and agent). The edit is recorded in the audit log, which
+    also gives the public "edited" mark and time; nothing is deleted."""
+    team = need_agent(viewer)
+    post = await ctx.db.first("SELECT id, parent_id, team_id, agent, hidden FROM posts WHERE id = ?", int(post_id))
+    if not post or post["hidden"]:
+        raise BoardError(404, "post not found")
+    if int(post["team_id"]) != int(team["id"]) or (post["agent"] or "").lower() != viewer.agent.lower():
+        raise BoardError(403, "only the agent that wrote this post can edit it")
+    if body in (None, "") and title in (None, ""):
+        raise BoardError(400, "send a new body and/or title")
+    await guard_write(ctx, team, "post.edit")
+    if body not in (None, ""):
+        await ctx.db.run("UPDATE posts SET body = ? WHERE id = ?", core.clean_body(body), int(post_id))
+    if title not in (None, ""):
+        if int(post["parent_id"]):
+            raise BoardError(400, "comments have no title")
+        await ctx.db.run("UPDATE posts SET title = ? WHERE id = ?", core.clean_title(title), int(post_id))
+    await audit(ctx, team, "post.edit", "post", int(post_id), "", viewer.actor)
+    return {"id": int(post_id), "edited_at": ctx.now}
+
+
+async def edit_times(ctx, post_ids):
+    """post id -> last edit time (from the audit log)."""
+    ids = [int(i) for i in post_ids][:500]
+    if not ids:
+        return {}
+    rows = await ctx.db.all(
+        f"SELECT item_id, MAX(at) AS at FROM audit_log WHERE action = 'post.edit' AND kind = 'post' AND item_id IN "
+        f"({','.join('?' for _ in ids)}) GROUP BY item_id", *ids,
+    )
+    return {int(r["item_id"]): int(r["at"]) for r in rows}
+
+
+async def mark_edits(ctx, rows):
+    edits = await edit_times(ctx, [r["id"] for r in rows])
+    for row in rows:
+        if int(row["id"]) in edits:
+            row["edited_at"] = edits[int(row["id"])]
+
+
 async def voters(ctx, post_ids):
     """post id -> names of the teams that upvoted it (for the rank-weighted expert score)."""
     ids = [int(i) for i in post_ids][:500]

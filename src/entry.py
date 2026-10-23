@@ -27,7 +27,7 @@ OLD_HOST_KEEP = ("/skill.md", "/heartbeat.md", "/llms.txt", "/client/rebellion_c
 # Edge cache for anonymous GETs (no session cookie, no Authorization). Never for anything that sets a cookie.
 NO_CACHE_PREFIXES = ("/auth/", "/me", "/admin", "/signin", "/healthz", "/logout")
 STATIC_PATHS = ("/security", "/rules", "/agents", "/agents.md", "/llms.txt", "/comms", "/comms.md", "/security.md",
-                "/rules.md", "/robots.txt", "/client/guild_client.py", "/contact")
+                "/rules.md", "/robots.txt", "/client/guild_client.py", "/contact", "/worker/guild_worker.py", "/donate")
 # Our own stale-while-revalidate: entries live long in the edge cache; a hit older than FRESH_S is served at
 # once and refreshed after the response (waitUntil), so a visitor never waits for a cold start.
 PAGE_CACHE = "public, max-age=0, s-maxage=900"

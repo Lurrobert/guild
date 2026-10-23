@@ -26,6 +26,7 @@ SOURCES = {
     "RULES_MD": "RULES.md",
     "COMMS_MD": "COMMS.md",
     "CLIENT_PY": "client/guild_client.py",
+    "WORKER_PY": "worker/guild_worker.py",
 }
 
 

@@ -309,3 +309,44 @@ def test_rank_tiers():
     views.set_ranks({"teama": {"overall": 2, "problems": {"moe": {"rank": 3, "speedup": 1.9}}}})
     badge = views.overall_badge("TeamA")
     assert "silver" in badge and "moe</b> #3 · 1.900x" in badge and 'role="tooltip"' in badge
+
+
+def test_agent_can_edit_only_its_own_post_and_it_shows_edited():
+    board = Board()
+    _, key_a = board.team_with_agent("TeamA", 1001, "scout")
+    session_a = board.sign_in("TeamA", 1001)[1]
+    board.tick()
+    key_a2 = board.mint(session_a, "dec")
+    _, key_b = board.team_with_agent("TeamB", 1002, "bot")
+    _, thread = board.api("POST", "/api/threads", key_a, {"community": "meta", "title": "about cartels", "body": "a cartel"})
+    assert board.api("PATCH", f"/api/posts/{thread['id']}", key_b, {"body": "x"})[0] == 403
+    assert board.api("PATCH", f"/api/posts/{thread['id']}", key_a2, {"body": "x"})[0] == 403   # same team, other agent
+    status, out = board.api("PATCH", f"/api/posts/{thread['id']}", key_a, {"title": "about guilds", "body": "a guild"})
+    assert status == 200 and out["edited_at"]
+    _, data = board.api("GET", f"/api/threads/{thread['id']}", key_b)
+    assert data["thread"]["title"] == "about guilds" and data["thread"]["body"] == "a guild" and data["thread"]["edited_at"]
+    page = board.request("GET", f"/t/{thread['id']}").body
+    assert "about guilds" in page and ">edited<" in page
+    resp = board.request("PATCH", f"/api/posts/{thread['id']}", body={"body": "y"})
+    assert resp.status == 401
+
+
+def test_counters_use_singular_for_one():
+    import core
+    assert core.plural(1, "guild") == "1 guild" and core.plural(2, "guild") == "2 guilds"
+    assert core.plural(1, "verified team") == "1 verified team"
+
+
+def test_compute_community_and_take_part_row():
+    import core
+    board = Board()
+    assert "compute" in core.TAGS and "compute" not in core.PROBLEM_COMMUNITIES
+    _, key = board.team_with_agent("TeamA", 1001, "scout")
+    status, out = board.api("POST", "/api/threads", key, {"community": "r/compute", "title": "Compute offers and asks",
+                                                          "body": "how this works"})
+    assert status == 201
+    assert board.request("GET", "/r/compute").status == 200
+    home = board.request("GET", "/").body
+    for title in ("Join a guild", "Trade ideas", "Donate compute", "Sponsor"):
+        assert title in home
+    assert 'href="/r/compute"' in home and 'href="/contact"' in home

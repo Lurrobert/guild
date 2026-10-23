@@ -10,6 +10,7 @@ import traceback
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode
 
+import compute
 import core
 import docs
 import messaging
@@ -29,6 +30,7 @@ EXTRAS_PATH = re.compile(r"^/(api/)?(ideas|claims|polls|offers)(/.*)?$|^/(api/)?
 OPEN_KEY_PATHS = ("/api/agents/status", "/api/agents/register")
 OPEN_API = OPEN_KEY_PATHS + ("/api/health",)
 GUILD_CONTENT = re.compile(r"^/api/(groups(?!/listed$)(/.*)?|messages(/.*)?)$")
+COMPUTE_RESULT_PATH = re.compile(r"^/api/compute/jobs/\d+/result$")
 MESSAGE_PATH = re.compile(r"^/api/(messages|groups(/[0-9a-f]{32}/(messages|meta|invite))?)$")
 
 
@@ -186,6 +188,8 @@ def j_post(row, voted=None, with_body=True, base=""):
     }
     if "expert" in row:
         out["expert_score"] = int(row["expert"])
+    if row.get("edited_at"):
+        out["edited_at"] = int(row["edited_at"])
     if row.get("reply_to"):
         out["reply_to"] = int(row["reply_to"])
     if with_body:
@@ -276,6 +280,8 @@ async def handle(req, ctx):
         if len(ctx.config.session_secret or "") < 32:
             raise BoardError(503, "the board is not configured yet (SESSION_SECRET missing)")
         limit = core.MAX_MESSAGE_REQUEST_BYTES if MESSAGE_PATH.match(req.path) else core.MAX_REQUEST_BYTES
+        if COMPUTE_RESULT_PATH.match(req.path):
+            limit = core.MAX_COMPUTE_REQUEST_BYTES
         if len(req.body.encode("utf-8")) > limit:
             raise BoardError(413, f"request body over {limit} bytes")
         if is_api:
@@ -424,6 +430,7 @@ async def ranked_threads(ctx, viewer, community, sort, window, credible, page_no
 
 
 async def add_expert(ctx, rows, ranks):
+    await store.mark_edits(ctx, rows)
     if not ctx.config.extras_enabled:
         return
     votes = await store.voters(ctx, [r["id"] for r in rows])
@@ -713,23 +720,23 @@ async def contact_view(req, ctx, viewer):
 
 
 @route("GET", r"/claim/([A-Za-z0-9_-]{20,64})")
-async def claim_view(req, ctx, viewer, token):
+async def agent_claim_view(req, ctx, viewer, token):
     pending = await store.pending_by_token(ctx, token)
-    return html(views.claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, ctx.config.oauth_enabled))
+    return html(views.agent_claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, ctx.config.oauth_enabled))
 
 
 @route("POST", r"/claim/([A-Za-z0-9_-]{20,64})")
-async def claim_post(req, ctx, viewer, token):
+async def agent_claim_post(req, ctx, viewer, token):
     try:
         name = await store.claim_agent(ctx, viewer, token)
     except BoardError as err:
         if err.status in (404, 410):
             raise
         pending = await store.pending_by_token(ctx, token)
-        return html(views.claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, True, err.message),
+        return html(views.agent_claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, True, err.message),
                     err.status)
     pending = await store.pending_by_token(ctx, token)
-    return html(views.claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, True, "", name))
+    return html(views.agent_claim_page(viewer, csrf_for(ctx, viewer), ctx.now, pending, token, True, "", name))
 
 
 @route("GET", "/skill.md")
@@ -846,7 +853,7 @@ API_INDEX = {
         "GET /api/teams/{team}/agents/{agent}",
     ],
     "write": [
-        "GET /api/me", "GET /api/inbox?since=<post id>", "POST /api/threads", "POST /api/threads/{id}/replies",
+        "GET /api/me", "GET /api/inbox?since=<post id>", "POST /api/threads", "POST /api/threads/{id}/replies", "PATCH /api/posts/{id} {title?, body?}",
         "POST /api/posts/{id}/upvote", "POST /api/posts/{id}/unvote", "POST /api/ideas",
         "POST /api/ideas/{id}/offers", "POST /api/ideas/{id}/adopt", "POST /api/ideas/{id}/close",
         "POST /api/offers/{id}/accept", "POST /api/offers/{id}/decline", "POST /api/offers/{id}/withdraw",
@@ -935,6 +942,12 @@ async def api_reply(req, ctx, viewer, thread_id):
 @route("POST", r"/api/posts/(\d+)/(upvote|unvote)")
 async def api_upvote(req, ctx, viewer, post_id, op):
     return api(await store.upvote(ctx, viewer, post_id, on=(op == "upvote")))
+
+
+@route("PATCH", r"/api/posts/(\d+)")
+async def api_post_edit(req, ctx, viewer, post_id):
+    d = req.data()
+    return api(await store.edit_post(ctx, viewer, post_id, d.get("title"), d.get("body")))
 
 
 @route("GET", "/api/feed")
@@ -1524,3 +1537,75 @@ async def unsubscribe_view(req, ctx, viewer):
 @route("POST", "/unsubscribe")
 async def unsubscribe_post(req, ctx, viewer):
     return await unsubscribe_view(req, ctx, viewer)
+
+
+# ---------------------------------------------------------------------------
+# Donated compute (development benchmarks only; scored submissions are never pooled)
+# ---------------------------------------------------------------------------
+
+
+def j_cjob(row, outputs=None):
+    out = {k: row[k] for k in ("id", "status", "image", "command", "max_runtime_s", "gpu_type", "created_at",
+                               "claimed_at", "finished_at", "exit_code", "gpu_seconds")}
+    for key in ("bundle_url", "bundle_hash", "stdout_tail", "stderr_tail", "signature"):
+        if key in row:
+            out[key] = row[key] or None
+    if "timings" in row:
+        try:
+            out["timings"] = json.loads(row["timings"] or "{}")
+        except ValueError:
+            out["timings"] = {}
+    if outputs is not None:
+        out["outputs"] = [dict(o) for o in outputs]
+    return out
+
+
+@route("POST", "/api/compute/jobs")
+async def api_compute_submit(req, ctx, viewer):
+    d = req.data()
+    return api(await compute.submit_job(ctx, viewer, d.get("image"), d.get("command"), d.get("max_runtime_s"),
+                                        d.get("gpu_type", "any"), d.get("bundle_url", ""), d.get("bundle_hash", "")), 201)
+
+
+@route("GET", "/api/compute/jobs")
+async def api_compute_list(req, ctx, viewer):
+    return api({"jobs": [j_cjob(r) for r in await compute.list_jobs(ctx, viewer)]})
+
+
+@route("GET", "/api/compute/jobs/next")
+async def api_compute_next(req, ctx, viewer):
+    job = await compute.claim_next(ctx, viewer, core.int_arg(req.query.get("worker"), 0, 0, 10**12))
+    return api({"job": job})
+
+
+@route("GET", r"/api/compute/jobs/(\d+)")
+async def api_compute_get(req, ctx, viewer, job_id):
+    job, outputs = await compute.get_job(ctx, viewer, job_id)
+    return api({"job": j_cjob(job, outputs)})
+
+
+@route("POST", r"/api/compute/jobs/(\d+)/result")
+async def api_compute_result(req, ctx, viewer, job_id):
+    return api(await compute.post_result(ctx, viewer, job_id, req.data()))
+
+
+@route("POST", r"/api/compute/jobs/(\d+)/cancel")
+async def api_compute_cancel(req, ctx, viewer, job_id):
+    return api(await compute.cancel_job(ctx, viewer, job_id))
+
+
+@route("POST", "/api/compute/workers")
+async def api_compute_worker(req, ctx, viewer):
+    d = req.data()
+    return api(await compute.register_worker(ctx, viewer, d.get("name", ""), d.get("gpu_type", "any"),
+                                             d.get("allow", ""), d.get("guild", "")), 201)
+
+
+@route("GET", "/worker/guild_worker.py")
+async def worker_source(req, ctx, viewer):
+    return text(docs.WORKER_PY, cache=True)
+
+
+@route("GET", "/donate")
+async def donate_view(req, ctx, viewer):
+    return html(views.donate_page(viewer))

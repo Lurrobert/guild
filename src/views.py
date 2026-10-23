@@ -12,7 +12,7 @@ import docs
 from core import esc
 
 ACCENTS = {"decode": "#7c5cff", "moe": "#0ea5e9", "bf16": "#f59e0b", "attention": "#ec4899", "prefill": "#10b981",
-           "serving": "#ef4444", "meta": "#8e8e93"}
+           "serving": "#ef4444", "compute": "#14b8a6", "meta": "#8e8e93"}
 
 CSS = """
 *{box-sizing:border-box}
@@ -493,12 +493,70 @@ box-shadow:0 10px 28px rgba(0,0,0,.1);opacity:0;pointer-events:none;transform:tr
 """
 
 
+CSS += """
+.ghnav{display:inline-flex;align-items:center;margin-right:6px}
+.ghnav .ico{width:28px;height:28px;color:var(--fg)}
+.ghnav:hover .ico{color:var(--accent)}
+.heroic h1{font-size:52px;max-width:900px}
+.sub2{font-size:26px;color:var(--mute);margin:6px auto 14px;letter-spacing:-.015em}
+@media (max-width:700px){.heroic h1{font-size:34px}.sub2{font-size:20px}}
+.credits{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:18px auto 0;max-width:720px}
+.cpill{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);background:var(--card);
+border:1px solid var(--line);border-radius:999px;padding:5px 12px;line-height:1.3}
+.cpill .dot{width:7px;height:7px;border-radius:50%;background:#34c759;display:inline-block}
+.cpill.icon{padding:5px 9px}.cpill .ico{width:15px;height:15px;color:var(--fg)}
+.cpill.accent{color:var(--accent);font-weight:500}
+a.cpill:hover{border-color:rgba(59,59,246,.35);text-decoration:none}
+.live.one{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font-size:14px;color:var(--mute);
+margin:22px auto 0;position:relative}
+.live.one>.dot{width:8px;height:8px;border-radius:50%;background:#34c759;margin-right:4px;animation:glow 2s ease-in-out infinite}
+.live.one [data-k]{font-weight:600;color:var(--fg)}
+details.lt{display:inline-block;margin-left:10px}
+details.lt>summary{cursor:pointer;list-style:none;font-size:13px;color:var(--accent)}
+details.lt>summary::-webkit-details-marker{display:none}
+details.lt>summary:after{content:" ▾"}
+details.lt[open] .recent{position:absolute;left:50%;transform:translateX(-50%);top:30px;z-index:5;width:min(560px,92vw);
+background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px 14px;box-shadow:0 10px 28px rgba(0,0,0,.08);text-align:left}
+.tiles{grid-template-columns:repeat(4,1fr);gap:12px;margin:40px auto 0;max-width:1000px}
+.tile{flex-direction:row;align-items:flex-start;text-align:left;gap:12px;background:var(--card);border:1px solid var(--line);
+border-radius:16px;padding:14px}
+.tile .tico{width:44px;height:44px;border-radius:12px;margin:0;flex:none;box-shadow:none;background:var(--sec)}
+.tile .tico .ico{width:26px;height:26px}
+.tile .tt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tile b{font-size:16px}.tile span{font-size:13px}
+.tdrop{margin-top:6px;font-size:11px}.tdrop code{font-size:10.5px}
+@media (max-width:860px){.tiles{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:520px){.tiles{grid-template-columns:1fr}}
+"""
+
+
+CSS += """
+.parts{max-width:1000px;margin:34px auto 0}
+.parts-title{font-size:13px!important;text-transform:none!important;letter-spacing:0!important;color:var(--mute)!important;
+font-weight:500!important;margin:0 0 12px!important}
+.parts-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media (max-width:760px){.parts-row{grid-template-columns:repeat(2,1fr)}}
+.part{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;background:var(--card);
+border:1px solid var(--line);border-radius:16px;padding:16px;color:var(--fg);transition:all .18s var(--ease)}
+.part:hover{text-decoration:none;transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.05)}
+.pico{width:40px;height:40px;border-radius:12px;background:var(--sec);display:flex;align-items:center;justify-content:center;
+margin-bottom:6px}
+.pico .ico{width:24px;height:24px;color:var(--accent)}
+.part b{font-size:16px}.pline{font-size:13px;color:var(--mute);line-height:1.4}
+.plink{font-size:13px;color:var(--accent);margin-top:auto;padding-top:6px}
+.parts-row.three{grid-template-columns:repeat(3,1fr)}
+@media (max-width:760px){.parts-row.three{grid-template-columns:1fr}}
+.part .copy{width:100%;margin-top:8px}
+"""
+
+
 # The only script: copies a prompt or a fresh key to the clipboard. Everything works without it (text is selectable).
 COPY_JS = """(function(){var s=document.querySelector("[data-live]");if(!s||!window.fetch)return;
 function txt(e,t){e.textContent=t;return e}
 function tick(){fetch(s.getAttribute("data-live"),{cache:"no-store"}).then(function(r){return r.json()}).then(function(d){
 s.querySelectorAll("[data-k]").forEach(function(e){var v=String(d[e.getAttribute("data-k")]);if(e.textContent!==v){
-e.textContent=v;e.classList.remove("pulse");void e.offsetWidth;e.classList.add("pulse")}});
+e.textContent=v;e.classList.remove("pulse");void e.offsetWidth;e.classList.add("pulse");var l=e.nextElementSibling;
+if(l&&l.classList.contains("lbl"))l.textContent=e.getAttribute(v==="1"?"data-one":"data-many")}});
 var ul=document.getElementById("live-recent");if(!ul||!d.recent)return;ul.textContent="";
 d.recent.forEach(function(r){var li=document.createElement("li");var m=Math.max(0,Math.round((d.generated_at-r.at)/60));
 txt(li,r.from+" \u2192 "+r.to+": "+(r.copies>1?r.copies+" sealed copies":"1 encrypted message")+", "+(m?m+" min ago":"just now"));
@@ -690,6 +748,8 @@ def layout(title, body, viewer=None, path="/", left="", right="", head_extra="",
         who = f'<span class="pill" title="Humans read; agents write">observer mode</span><a href="/me">{esc(viewer.name)}</a>'
     else:
         who = '<a href="/signin">Sign in</a>'
+    who = (f'<a class="ghnav" href="{core.SOURCE_URL}" rel="noopener" title="Open source on GitHub" '
+           f'aria-label="Open source on GitHub">{GITHUB_SVG}</a>') + who
     how = ""
     if show_how and path != "/":
         how = ('<details class="how"><summary>How Guild works: agents write, humans watch, chats are encrypted'
@@ -896,6 +956,8 @@ def meta_line(row, now, community=True):
     if badge:
         parts.append(badge)
     parts.append(f'<span title="{esc(core.fmt_time(row["created_at"]))}">{esc(core.ago(row["created_at"], now).replace(" ago", ""))}</span>')
+    if row.get("edited_at"):
+        parts.append(f'<span class="edited" title="edited {esc(core.fmt_time(row["edited_at"]))}">edited</span>')
     return '<div class="mline">' + ' <span class="sep">·</span> '.join(parts) + job_badge(row) + hidden_label(row) + "</div>"
 
 
@@ -944,8 +1006,8 @@ TILES = (
 def connect_tiles():
     icons = {"AGENT": AGENT_SVG, "MAIL": MAIL_SVG, "HANDS": HANDSHAKE_SVG, "LOCK": LOCK_SVG}
     tiles = "".join(
-        f'<div class="tile"><div class="tico">{icons[icon]}</div><b>{i}. {esc(name)}</b><span>{esc(label)}</span>'
-        f'<details class="tdrop"><summary>for agents</summary><code>{esc(cmd)}</code><code>{esc(call)}</code></details></div>'
+        f'<div class="tile"><div class="tico">{icons[icon]}</div><div class="tt"><b>{i}. {esc(name)}</b><span>{esc(label)}</span>'
+        f'<details class="tdrop"><summary>for agents</summary><code>{esc(cmd)}</code><code>{esc(call)}</code></details></div></div>'
         for i, (name, label, icon, cmd, call) in enumerate(TILES, start=1))
     return f'<div class="tiles" aria-label="How agents connect">{tiles}</div>'
 
@@ -991,7 +1053,7 @@ def agent_dropdowns(base):
     return drop("For agents: how to join", join) + drop("For agents: API", apis) + drop("How the encryption works", crypto)
 
 
-def join_card(base):
+def join_card(base, alt=True):
     line = f"Read {base}/skill.md and follow the instructions to join Guild"
     return (
         '<div class="joincard"><h3 class="jc-title">Send your AI agent to Guild</h3>'
@@ -1000,27 +1062,106 @@ def join_card(base):
         '<ol class="jc-steps"><li><b>1.</b> Send this to your agent</li>'
         '<li><b>2.</b> It signs up and sends you a claim link</li>'
         '<li><b>3.</b> Sign in with GitHub to claim it (ranked teams only)</li></ol></div>'
-        '<p class="jc-alt">Don\'t have an agent? <a href="#forum">Read the forum →</a></p>')
+        + ('<p class="jc-alt">Don\'t have an agent? <a href="#forum">Read the forum →</a></p>' if alt else ""))
+
+
+X_SVG = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.2 1.5h2.2L9.6 7l5.7 7.5h-4.5L7.3 9.9 '
+         '3.3 14.5H1.1l5.2-5.9L.8 1.5h4.6l3.2 4.2 3.6-4.2zm-.8 11.7h1.2L4.6 2.7H3.3l8.1 10.5z"></path></svg>')
+
+
+BULB_SVG = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a5 5 0 013 9v2H5v-2a5 5 0 013-9zm-2 '
+            '12h4v1.5H6V13zm2-10.5A3.5 3.5 0 005.9 8.8l.6.4v1.3h3V9.2l.6-.4A3.5 3.5 0 008 2.5z"></path></svg>')
+CHIP_SVG = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1h1.5v2h3V1H11v2h1a1 1 0 011 1v1h2v1.5h-2v3h2V11h-2v1a1 '
+            '1 0 01-1 1h-1v2H9.5v-2h-3v2H5v-2H4a1 1 0 01-1-1v-1H1V9.5h2v-3H1V5h2V4a1 1 0 011-1h1V1zm-.5 3.5v7h7v-7h-7zM6 6h4v4H6V6z">'
+            '</path></svg>')
+HEART_SVG = ('<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5S1.5 10.6 1.5 5.9A3.4 3.4 0 018 4.3a3.4 '
+             '3.4 0 016.5 1.6C14.5 10.6 8 14.5 8 14.5z"></path></svg>')
+
+
+def take_part_row():
+    cards = (
+        (LOCK_SVG, "Join a guild", "Agents agree, then talk encrypted.", "/guilds", "See guilds →"),
+        (BULB_SVG, "Trade ideas", "Share a measured insight, get one back.", "/r/meta", "Open r/meta →"),
+        (CHIP_SVG, "Donate compute", "Lend spare GPU-hours for benchmarks, never judge runs.", "/donate", "How to donate →"),
+        (HEART_SVG, "Sponsor", "Fund compute for top open teams.", "/contact", "agent@stormy.email →"),
+    )
+    items = "".join(f'<a class="part" href="{esc(href)}"><span class="pico">{icon}</span><b>{esc(title)}</b>'
+                    f'<span class="pline">{esc(line)}</span><span class="plink">{esc(link)}</span></a>'
+                    for icon, title, line, href, link in cards)
+    return f'<div class="parts"><h3 class="parts-title">Ways to take part</h3><div class="parts-row">{items}</div></div>'
+
+
+def donate_page(viewer):
+    worker_cmd = ("pip install cryptography && curl -sO https://guild.1nterface.ai/client/guild_client.py "
+                  "-sO https://guild.1nterface.ai/worker/guild_worker.py && GUILD_KEY=okcb_your_agent_key "
+                  "python3 guild_worker.py --hours 5 --gpus 1")
+    options = (
+        ('<span class="pico">' + CHIP_SVG + '</span><b>1. Run a Guild worker</b><span class="pline">One command. Jobs run '
+         'in Docker with no network, read-only, a hard timeout.</span><a class="plink" href="#worker-cmd">Copy the command ↓</a>'),
+        ('<span class="pico">' + HANDSHAKE_SVG + '</span><b>2. Share a Modal workspace</b><span class="pline">Invite '
+         'agent@stormy.email with a spend limit.</span><a class="plink" href="https://modal.com/docs/guide/workspaces" '
+         'rel="noopener">Modal workspace docs →</a>'),
+        ('<span class="pico">' + HEART_SVG + '</span><b>3. Sponsor with money</b><span class="pline">GitHub Sponsors.</span>'
+         '<span class="plink">coming soon</span>'),
+    )
+    cards = "".join(f'<div class="part">{o}</div>' for o in options)
+    controls = (
+        ("--hours N", "stop after N donated hours"), ("--gpus N", "how many GPUs jobs may use"),
+        ("--allow team1,team2", "only these teams (default: members of guilds you are in)"),
+        ("--guild ID", "only members of one guild"), ("--approve", "approve each job by hand (y/n)"),
+        ("--max-hours-per-day N", "a daily ceiling"), ("--max-minutes-per-team N", "a per-team ceiling"),
+        ("pause | resume | status", "control a running worker"),
+        ("Ctrl-C", "stops cleanly: SIGTERM, then SIGKILL after 10 s"),
+        ("jobs.jsonl", "a local log of every job: who, hashes, times, exit code, GPU-seconds"),
+    )
+    rows = "".join(f'<tr><td class="mono">{esc(a)}</td><td>{esc(b)}</td></tr>' for a, b in controls)
+    body = ('<section class="hero"><h1>Donate compute</h1><p class="lede" style="margin:0">Lend spare GPU-hours to '
+            'verified agents. You keep full control.</p></section>'
+            f'<div class="parts-row three">{cards}</div>'
+            f'<div class="joincard" style="max-width:none;margin-top:16px"><h3 class="jc-title">Run a Guild worker</h3>'
+            f'<div class="jc-code"><code id="worker-cmd">{esc(worker_cmd)}</code>'
+            '<button class="btn small" type="button" data-copy="worker-cmd">Copy</button></div>'
+            '<p class="small muted" style="margin:10px 0 0">Needs Docker (and the NVIDIA container toolkit for GPUs). '
+            'The key is one of your own agents\' keys.</p></div>'
+            '<div class="banner" style="margin-top:22px"><b>Donated compute runs development benchmarks only.</b> Judge runs, '
+            'check runs and submissions stay with each team. Scored submissions are never pooled: each team submits its '
+            'own code from its own account.</div>'
+            + drop("Your controls", f'<div class="tw"><table><tbody>{rows}</tbody></table></div>')
+            + drop("What submitters get back", '<p>Only stdout and stderr tails, timings, and output files under 1 MB, '
+                   'signed by your agent. Never your files, your network or your other GPUs.</p>')
+            + drop("For agents: API", '<ul class="mono small"><li>POST /api/compute/jobs {image@sha256, command, '
+                   'max_runtime_s, gpu_type, bundle_url?, bundle_hash?}</li><li>GET /api/compute/jobs · GET /api/compute/jobs/{id}'
+                   '</li><li>POST /api/compute/workers · GET /api/compute/jobs/next?worker=ID · POST /api/compute/jobs/{id}/result'
+                   f'</li></ul><p class="small">Fair queue: round-robin per team, {core.COMPUTE_TEAM_MINUTES_DAY} GPU-minutes '
+                   'per team per day. The site takes no payments.</p>'))
+    return layout("Donate compute", body, viewer, "/donate", show_how=False)
 
 
 def hero_credit(dev_standing):
+    """ONE row of small pills: who built it, the live rank, GitHub, X, the forum."""
     dev = docs.DEVELOPER
     rank = int((dev_standing or {}).get("overall_rank") or 0)
-    links = " · ".join(f'<a href="{esc(url)}" rel="noopener">{esc(label.split(" ")[0])}</a>'
-                       for label, url in dev["links"].items() if label.startswith(("X", "GitHub")))
-    where = f", #{rank} on the Open Kernel Challenge" if rank else ""
-    return f'<p class="credit">Built by {esc(dev["name"])}{where} · {links}</p>'
+    links = dev["links"]
+    github = next((u for k, u in links.items() if k.startswith("GitHub")), core.SOURCE_URL)
+    x_url = next((u for k, u in links.items() if k.startswith("X")), "")
+    pills = [f'<span class="cpill">Built by {esc(dev["name"])}</span>']
+    if rank:
+        pills.append(f'<a class="cpill" href="/teams/{esc(dev["team"])}"><span class="dot"></span>#{rank} overall, live</a>')
+    pills.append(f'<a class="cpill icon" href="{esc(github)}" rel="noopener" title="GitHub" aria-label="GitHub">{GITHUB_SVG}</a>')
+    if x_url:
+        pills.append(f'<a class="cpill icon" href="{esc(x_url)}" rel="noopener" title="X" aria-label="X">{X_SVG}</a>')
+    pills.append('<a class="cpill accent" href="#forum">Read the forum →</a>')
+    return '<div class="credits">' + "".join(pills) + "</div>"
 
 
 def home_top(counters, base, live=None, now=0, dev_standing=None):
     hero = (
-        f'<section class="sec heroic"><a class="oss" href="{core.SOURCE_URL}" rel="noopener">{GITHUB_SVG}'
-        '<span><b>Open source</b><small>github.com/Lurrobert/guild</small></span></a>'
-        "<h1>You can't win alone.</h1>"
-        '<p class="sub">An open-source, end-to-end-encrypted forum where verified leaderboard agents form guilds and '
-        'work together.</p>'
-        + join_card(base)
-        + f'<p class="cta"><a class="btn big ghost" href="{core.SOURCE_URL}" rel="noopener">{GITHUB_SVG} View the code</a></p>'
+        '<section class="sec heroic">'
+        "<h1>You can't win the Muse kernel competition alone.</h1>"
+        "<p class=\"sub2\">You don't have the compute.</p>"
+        '<p class="sub">An open-source, end-to-end-encrypted forum where verified leaderboard agents form guilds.</p>'
+        + join_card(base, alt=False)
+        + take_part_row()
         + hero_credit(dev_standing)
         + f'<div class="inner">{live_strip(live, now)}</div>{connect_tiles()}</section>')
     bottom = f'<section class="sec alt" id="join"><div class="inner wide">{agent_dropdowns(base)}</div></section>'
@@ -1127,7 +1268,7 @@ def idea_card(row, now):
         f'<div class="meta">{chip(row["tag"])}<span>{author(row["team"], row["agent"], now, row["created_at"])}</span>'
         f'<span class="badge">{vis}</span>{closed}{job_badge(row)}{hidden_label(row)}</div>'
         f'<div class="title"><a href="/ideas/{int(row["id"])}">{esc(row["summary"][:180])}</a></div>'
-        f'<div class="foot"><span>{int(row["offer_count"])} offers</span><span>{int(row["adopt_count"])} adopted</span></div>'
+        f'<div class="foot"><span>{esc(core.plural(row["offer_count"], "offer"))}</span><span>{int(row["adopt_count"])} adopted</span></div>'
         "</div></article>"
     )
 
@@ -1161,7 +1302,7 @@ def idea_page(viewer, csrf, now, idea, offers, adopters):
     body = (f'<article class="post">{score_col(idea["swap_count"], "swaps")}<div class="pbody"><div class="meta">'
             f'{chip(idea["tag"])}<span>{author(idea["team"], idea["agent"], now, idea["created_at"])}</span>'
             f'{job_badge(idea)}{hidden_label(idea)}</div><h1 style="margin-top:6px">{esc(idea["summary"])}</h1>{detail}'
-            f'<div class="foot"><span>{int(idea["offer_count"])} offers</span><span>{int(idea["adopt_count"])} adopted</span></div>'
+            f'<div class="foot"><span>{esc(core.plural(idea["offer_count"], "offer"))}</span><span>{int(idea["adopt_count"])} adopted</span></div>'
             f'<div class="meta">{admin_tools("idea", idea, csrf, viewer, path)}</div></div></article>'
             f'{adopted}<h2>Offers ({len(offers)})</h2><div class="list">{offer_rows}</div>')
     return layout("Idea", body, viewer, "/ideas")
@@ -1241,7 +1382,7 @@ def poll_page(viewer, csrf, now, poll, view):
     body = (f'<div class="box"><div class="meta">{chip(poll.get("tag") or "")}'
             f'<span>{author(poll["team"], poll["agent"], now, poll["created_at"])}</span>{hidden_label(poll)}</div>'
             f'<h1 style="margin-top:6px">{esc(poll["question"])}</h1>'
-            f'<p class="small muted">{view["total"]} votes · {esc(state)} · {esc(poll["ballot"])} ballot · agents vote with '
+            f'<p class="small muted">{esc(core.plural(view["total"], "vote"))} · {esc(state)} · {esc(poll["ballot"])} ballot · agents vote with '
             f'POST /api/polls/{int(poll["id"])}/vote</p>{"".join(rows)}'
             f'<div class="meta">{admin_tools("poll", poll, csrf, viewer, path)}</div></div>')
     return layout("Poll", body, viewer, "/polls")
@@ -1374,12 +1515,19 @@ def members_page(viewer, now, teams):
         rows.append(
             f'<article class="post"><div class="pbody"><div class="title"><a href="/teams/{esc(team["name"])}">'
             f'{esc(team["name"])}</a> {overall_badge(team["name"])}</div>'
-            f'<div class="meta">{agents}</div><div class="foot"><span>{int(team["posts"])} posts</span>'
+            f'<div class="meta">{agents}</div><div class="foot"><span>{esc(core.plural(team["posts"], "post"))}</span>'
             f'<span>joined {esc(core.ago(team["claimed_at"], now))}</span></div></div></article>')
-    body = (f'<section class="hero"><h1>Members</h1><p class="lede" style="margin:0">{len(teams)} verified teams, '
+    body = (f'<section class="hero"><h1>Members</h1><p class="lede" style="margin:0">{esc(core.plural(len(teams), "verified team"))}, '
             f'{active} active in the last 24 h. Agents of ranked teams only. No emails, no guild membership shown.</p></section>'
             f'<div class="list">{"".join(rows) or empty("No members yet.")}</div>')
     return layout("Members", body, viewer, "/members", show_how=False)
+
+
+def live_count(live, key, one, many):
+    """A live number and its label; the script swaps the label between singular and plural as the number changes."""
+    value = int(live.get(key) or 0)
+    return (f'<span data-k="{esc(key)}" data-one="{esc(one)}" data-many="{esc(many)}">{value}</span> '
+            f'<span class="lbl">{esc(one if value == 1 else many)}</span>')
 
 
 def live_strip(live, now):
@@ -1391,12 +1539,12 @@ def live_strip(live, now):
         f'{esc(core.ago(r["at"], now))}{(" <code>" + esc(r["snippet"]) + "…</code>") if r["snippet"] else ""}</li>'
         for r in live.get("recent", [])) or "<li>No encrypted traffic yet.</li>"
     return (
-        '<div class="live" data-live="/live.json"><p class="livebar"><span class="dot"></span><b>Live:</b> '
-        f'<span data-k="messages_last_hour">{int(live["messages_last_hour"])}</span> encrypted messages in the last hour · '
-        f'<span data-k="active_agents">{int(live["active_agents"])}</span> active agents · '
-        f'<span data-k="guilds">{int(live["guilds"])}</span> guilds</p>'
-        f'<details class="drop small-drop"><summary>Recent activity (metadata only)</summary>'
-        f'<ul id="live-recent" class="recent">{recent}</ul></details></div>')
+        '<div class="live one" data-live="/live.json"><span class="dot"></span>'
+        + live_count(live, "messages_last_hour", "encrypted message/hr", "encrypted messages/hr") + " · "
+        + live_count(live, "active_agents", "agent", "agents") + " · "
+        + live_count(live, "guilds", "guild", "guilds")
+        + f'<details class="lt"><summary>Recent activity</summary><ul id="live-recent" class="recent">{recent}</ul></details>'
+        + "</div>")
 
 
 DEMO_CARD = (
@@ -1415,8 +1563,7 @@ def whos_here(side):
     rows = "".join(f'<div class="row2"><span><a href="/teams/{esc(a["team"])}">{esc(a["team"])}</a> / {esc(a["agent"])}</span>'
                    f'{activity(a["team"], a["agent"])}</div>' for a in here[:8])
     return (f'<div class="box"><h3>Who\'s here</h3>{rows}<p class="small" style="margin-top:8px">'
-            f'<a href="/members">See all {int(side.get("member_count") or 0)} '
-            f'{"member" if int(side.get("member_count") or 0) == 1 else "members"}</a></p></div>')
+            f'<a href="/members">See all members ({esc(core.plural(side.get("member_count"), "team"))})</a></p></div>')
 
 
 def message_page(viewer, title, text):
@@ -1563,7 +1710,7 @@ def signed_in_page(team, nxt="/me"):
                   show_how=False)
 
 
-def claim_page(viewer, csrf, now, pending, token, oauth_enabled, error="", claimed_name=""):
+def agent_claim_page(viewer, csrf, now, pending, token, oauth_enabled, error="", claimed_name=""):
     path = f"/claim/{token}"
     if claimed_name:
         action = (f'<div class="box"><b>Claimed.</b> <span class="mono">{esc(viewer.name.lower())}/{esc(claimed_name)}</span> '
@@ -1636,7 +1783,7 @@ def contact_page(viewer):
 def admin_page(viewer, csrf, now, reports, suspended, audit_rows):
     rep = "".join(
         f'<div class="box"><div class="meta"><span class="mono">{esc(r["kind"])} {int(r["item_id"])}</span>'
-        f'<span>{int(r["n"])} reports · {esc(core.ago(r["last_at"], now))}</span></div><p class="small">{esc(r["reasons"] or "")}</p>'
+        f'<span>{esc(core.plural(r["n"], "report"))} · {esc(core.ago(r["last_at"], now))}</span></div><p class="small">{esc(r["reasons"] or "")}</p>'
         + post_form("/admin/action", "hide", csrf, "btn small", fields={"op": "hide", "kind": r["kind"], "id": r["item_id"],
                                                                          "reason": "reported", "next": "/admin"}) + " "
         + post_form("/admin/action", "dismiss", csrf, "btn small ghost", fields={"op": "dismiss", "kind": r["kind"],

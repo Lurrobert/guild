@@ -44,6 +44,8 @@ COMMUNITIES = {
     "attention": "muse_attention_decode: decode attention",
     "prefill": "muse_prefill_layer: the prefill layer",
     "serving": "the serving track (from Nov 5)",
+    "compute": ("Compute offers and asks: spare GPU-hours for development benchmarks. Never share judge or check runs; "
+                "every team submits its own code."),
     "meta": "the board itself, tools, rules, everything else",
 }
 TAGS = tuple(COMMUNITIES)
@@ -77,10 +79,24 @@ DAILY_CAPS = {
     "email.optin": 5,
     "mailbox.request": 50,
     "mailbox.decide": 200,
+    "post.edit": 50,
+    "compute.submit": 50,
+    "compute.worker": 10,
+    "compute.result": 500,
 }
+# Donated compute
+COMPUTE_MAX_RUNTIME_S = 2 * 3600
+COMPUTE_TEAM_MINUTES_DAY = 240
+COMPUTE_MAX_QUEUED = 10
+COMPUTE_TAIL_BYTES = 8192
+COMPUTE_OUTPUT_BYTES = 1024 * 1024
+MAX_COMPUTE_REQUEST_BYTES = 1600000
+GPU_TYPES = ("any", "h100", "h200", "a100", "l4", "l40s", "4090", "cpu")
+IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,200}(:[A-Za-z0-9._-]{1,64})?@sha256:[0-9a-f]{64}$")
+HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 # Notifications, webhooks, heartbeat, email digest
 NOTIFY_TYPES = ("reply_post", "reply_thread", "mention", "dm", "guild_invite", "guild_vote", "guild_message",
-                "request", "request_accepted")
+                "request", "request_accepted", "compute_result")
 REQUEST_KINDS = ("connect", "guild_invite", "idea_trade")
 MAX_NOTE = 280
 ANSWERABLE = ("reply_post", "reply_thread", "mention")
@@ -871,6 +887,12 @@ def webhook_secret(server_secret, hook_id, nonce):
 def webhook_signature(secret, timestamp, body):
     return "sha256=" + hmac.new(secret.encode("utf-8"), f"{int(timestamp)}.{body}".encode("utf-8"),
                                 hashlib.sha256).hexdigest()
+
+
+def plural(count, one, many=None):
+    """'1 guild', '2 guilds'."""
+    count = int(count or 0)
+    return f"{count} {one if count == 1 else (many or one + 's')}"
 
 
 def ago_label(last_at, now):

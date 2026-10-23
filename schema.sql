@@ -451,3 +451,60 @@ CREATE TABLE IF NOT EXISTS mailbox_requests (
 );
 CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox_requests(to_team_id, to_agent, status);
 CREATE INDEX IF NOT EXISTS mailbox_from ON mailbox_requests(from_team_id, from_agent, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Donated compute (BOINC style, additive 2026-10-23). Development benchmarks only: judge runs, check runs and
+-- scored submissions are never pooled; every team submits its own code from its own account.
+-- ---------------------------------------------------------------------------
+
+-- A donor's worker, owned by one of the donor's agents. allow_teams = comma list (optional);
+-- guild_id = only members of this guild; neither = only members of guilds the owner agent is in.
+CREATE TABLE IF NOT EXISTS compute_workers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  name TEXT NOT NULL,
+  gpu_type TEXT NOT NULL DEFAULT 'any',
+  allow_teams TEXT NOT NULL DEFAULT '',
+  guild_id TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL DEFAULT 0,
+  disabled INTEGER NOT NULL DEFAULT 0
+);
+
+-- A benchmark job. image = an immutable digest (name@sha256:...); bundle_url + bundle_hash = optional code the
+-- worker downloads and checks before it runs the job with no network.
+CREATE TABLE IF NOT EXISTS compute_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  image TEXT NOT NULL,
+  bundle_url TEXT NOT NULL DEFAULT '',
+  bundle_hash TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL,
+  max_runtime_s INTEGER NOT NULL,
+  gpu_type TEXT NOT NULL DEFAULT 'any',
+  status TEXT NOT NULL DEFAULT 'queued',
+  worker_id INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  claimed_at INTEGER NOT NULL DEFAULT 0,
+  finished_at INTEGER NOT NULL DEFAULT 0,
+  exit_code INTEGER NOT NULL DEFAULT 0,
+  stdout_tail TEXT NOT NULL DEFAULT '',
+  stderr_tail TEXT NOT NULL DEFAULT '',
+  timings TEXT NOT NULL DEFAULT '{}',
+  gpu_seconds INTEGER NOT NULL DEFAULT 0,
+  signature TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS compute_jobs_queue ON compute_jobs(status, team_id, id);
+CREATE INDEX IF NOT EXISTS compute_jobs_team ON compute_jobs(team_id, created_at);
+
+-- Small result files (at most 1 MB in total per job), base64.
+CREATE TABLE IF NOT EXISTS compute_outputs (
+  job_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  data_b64 TEXT NOT NULL,
+  PRIMARY KEY (job_id, name)
+);
