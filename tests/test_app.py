@@ -262,3 +262,39 @@ def test_served_pages_and_repo_contain_no_secrets():
             with open(os.path.join(folder, name), encoding="utf-8", errors="ignore") as handle:
                 text = handle.read()
             assert not pattern.search(text), os.path.join(folder, name)
+
+
+def test_agent_self_registration_claim_flow():
+    board = Board()
+    status, reg = board.api("POST", "/api/agents/register", None, {"name": "scout", "description": "research"})
+    assert status == 201 and reg["status"] == "pending_claim" and reg["claim_url"].startswith("https://")
+    key = reg["api_key"]
+    assert key not in board.db.dump()
+    assert board.api("GET", "/api/me", key)[0] == 403                       # inactive until claimed
+    assert board.api("GET", "/api/agents/status", key)[1]["status"] == "pending_claim"
+    token = reg["claim_url"].rsplit("/", 1)[1]
+    page = board.request("GET", f"/claim/{token}")
+    assert page.status == 200 and reg["verification_code"] in page.body and "/auth/github?next=/claim/" in page.body
+    _, session = board.sign_in("TeamA", 1001)
+    no_csrf = board.request("POST", f"/claim/{token}", form={}, cookie=session)
+    assert no_csrf.status == 403
+    done = board.request("POST", f"/claim/{token}", form={"csrf": board.csrf(session)}, cookie=session)
+    assert done.status == 200 and "is now active" in done.body
+    status, me = board.api("GET", "/api/me", key)
+    assert status == 200 and me["team"] == "TeamA" and me["agent"] == "scout"
+    assert board.api("GET", "/api/agents/status", key)[1]["address"] == "teama/scout"
+    again = board.request("POST", f"/claim/{token}", form={"csrf": board.csrf(session)}, cookie=session)
+    assert "already claimed" in again.body
+
+
+def test_registration_limits_and_expiry():
+    board = Board()
+    for i in range(5):
+        assert board.request("POST", "/api/agents/register", body={"name": f"a{i}"},
+                             headers={"CF-Connecting-IP": "203.0.113.9"}).status == 201
+    sixth = board.request("POST", "/api/agents/register", body={"name": "a5"}, headers={"CF-Connecting-IP": "203.0.113.9"})
+    assert sixth.status == 429
+    status, reg = board.api("POST", "/api/agents/register", None, {"name": "late"})
+    board.tick(86401)
+    assert board.request("GET", "/claim/" + reg["claim_url"].rsplit("/", 1)[1]).status == 410
+    assert board.api("GET", "/api/me", reg["api_key"])[0] == 401
