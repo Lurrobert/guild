@@ -35,6 +35,8 @@ STATIC_CACHE = "public, max-age=300, s-maxage=3600"
 LIVE_CACHE = "public, max-age=5, s-maxage=120"
 FRESH_S = {PAGE_CACHE: 30, STATIC_CACHE: 600, LIVE_CACHE: 10}
 AT_HEADER = "x-guild-cached-at"
+READ_TRIES = 3
+READ_BACKOFF_S = 0.05
 
 
 def _py(value):
@@ -64,12 +66,25 @@ class D1:
         stmt = self.binding.prepare(sql)
         return stmt.bind(*[_arg(a) for a in args]) if args else stmt
 
+    async def _read(self, sql, args, method):
+        """A read retried on any D1 error: D1 drops a request now and then ("Network connection lost", an object
+        reset by a deploy), and one dropped read used to answer the whole request 500. Reads are idempotent;
+        writes are never retried (one that failed late may have committed)."""
+        for attempt in range(READ_TRIES):
+            try:
+                return _py(await getattr(self._stmt(sql, args), method)())
+            except Exception as err:
+                if attempt == READ_TRIES - 1:
+                    raise
+                print(f"guild d1 retry {attempt + 1}: {str(err)[:160]}")
+                await asyncio.sleep(READ_BACKOFF_S * (attempt + 1))
+
     async def all(self, sql, *args):
-        res = _py(await self._stmt(sql, args).all()) or {}
+        res = await self._read(sql, args, "all") or {}
         return [dict(row) for row in (res.get("results") or [])]
 
     async def first(self, sql, *args):
-        row = _py(await self._stmt(sql, args).first())
+        row = await self._read(sql, args, "first")
         return dict(row) if row else None
 
     async def run(self, sql, *args):

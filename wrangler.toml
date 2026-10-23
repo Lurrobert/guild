@@ -10,6 +10,10 @@ routes = [
 ]
 preview_urls = false
 
+# Keeps each request's log lines (a 500 prints its traceback) so a past error can be read, not only a live tail.
+[observability]
+enabled = true
+
 # Refreshes the leaderboard cache off the request path and keeps an instance warm.
 [triggers]
 crons = ["*/2 * * * *"]

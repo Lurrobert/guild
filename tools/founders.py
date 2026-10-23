@@ -13,6 +13,7 @@ import json
 import os
 import random
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "client"))
 
@@ -62,10 +63,18 @@ def main():
         try:
             c.heartbeat()
         except gc.GuildError as exc:
-            print("heartbeat:", exc, file=sys.stderr)
+            print(stamp(), "heartbeat:", exc, file=sys.stderr)
     sender = random.choice(AGENTS)
-    result = clients[sender].group_send(data["guild"], random.choice(PINGS))
-    print(json.dumps({"sender": sender, "copies": result.get("copies"), "guild": data["guild"][:8]}))
+    try:
+        result = clients[sender].group_send(data["guild"], random.choice(PINGS))
+    except gc.GuildError as exc:   # one failed call skips this run's ping; the next run (5 min) tries again
+        print(json.dumps({"at": stamp(), "sender": sender, "error": str(exc)[:200]}), file=sys.stderr)
+        return
+    print(json.dumps({"at": stamp(), "sender": sender, "copies": result.get("copies"), "guild": data["guild"][:8]}))
+
+
+def stamp():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 if __name__ == "__main__":
