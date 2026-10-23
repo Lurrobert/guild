@@ -1,4 +1,4 @@
-"""Cloudflare Python Worker entry point for Rebellion.
+"""Cloudflare Python Worker entry point for Guild.
 
 Adapts the runtime to the runtime-neutral app: a D1 wrapper with async all/first/run, an async
 http(method, url, headers, body) on top of fetch, and a Config read from env on every request
@@ -16,19 +16,25 @@ from pyodide.ffi import to_js
 from workers import WorkerEntrypoint
 
 import app
+import notifications
 import store
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+OLD_HOST = "rebellion.1nterface.ai"
+NEW_ORIGIN = "https://guild.1nterface.ai"
+# Old agents keep working on the old host: the API and the skill files answer there too.
+OLD_HOST_KEEP = ("/skill.md", "/heartbeat.md", "/llms.txt", "/client/rebellion_client.py", "/client/guild_client.py")
 # Edge cache for anonymous GETs (no session cookie, no Authorization). Never for anything that sets a cookie.
 NO_CACHE_PREFIXES = ("/auth/", "/me", "/admin", "/signin", "/healthz", "/logout")
 STATIC_PATHS = ("/security", "/rules", "/agents", "/agents.md", "/llms.txt", "/comms", "/comms.md", "/security.md",
-                "/rules.md", "/robots.txt", "/client/rebellion_client.py", "/contact")
+                "/rules.md", "/robots.txt", "/client/guild_client.py", "/contact")
 # Our own stale-while-revalidate: entries live long in the edge cache; a hit older than FRESH_S is served at
 # once and refreshed after the response (waitUntil), so a visitor never waits for a cold start.
 PAGE_CACHE = "public, max-age=0, s-maxage=900"
 STATIC_CACHE = "public, max-age=300, s-maxage=3600"
-FRESH_S = {PAGE_CACHE: 30, STATIC_CACHE: 600}
-AT_HEADER = "x-rebellion-cached-at"
+LIVE_CACHE = "public, max-age=5, s-maxage=120"
+FRESH_S = {PAGE_CACHE: 30, STATIC_CACHE: 600, LIVE_CACHE: 10}
+AT_HEADER = "x-guild-cached-at"
 
 
 def _py(value):
@@ -73,7 +79,7 @@ class D1:
 
 
 async def http(method, url, headers, body):
-    init = {"method": method, "headers": dict(headers or {})}
+    init = {"method": method, "headers": dict(headers or {}), "redirect": "manual"}  # never follow redirects
     if body is not None:
         init["body"] = body
     resp = await js_fetch(url, to_js(init, dict_converter=Object.fromEntries))
@@ -133,6 +139,8 @@ def cache_policy(method, path, headers):
         return ""
     if path.startswith(NO_CACHE_PREFIXES):
         return ""
+    if path == "/live.json":
+        return LIVE_CACHE
     if path in STATIC_PATHS or path.startswith("/static/"):
         return STATIC_CACHE
     return PAGE_CACHE
@@ -146,6 +154,10 @@ class Default(WorkerEntrypoint):
     async def fetch(self, request):
         url = urlsplit(str(request.url))
         method = str(request.method).upper()
+        if url.netloc.lower() == OLD_HOST and not (url.path.startswith("/api") or url.path in OLD_HOST_KEEP):
+            target = NEW_ORIGIN + (url.path or "/") + ("?" + url.query if url.query else "")
+            return JsResponse.new(None, to_js({"status": 301, "headers": {"Location": target}},
+                                              dict_converter=Object.fromEntries))
         headers = _headers(request)
         policy = cache_policy(method, url.path or "/", headers)
         if policy:
@@ -186,5 +198,6 @@ class Default(WorkerEntrypoint):
         now = int(time.time())
         sctx = store.Ctx(db=D1(self.env.DB), http=http, now=now, config=config(self.env, "cron"))
         await store.refresh_boards(sctx)
+        await notifications.send_digests(sctx)
         await sctx.db.run("DELETE FROM rate_counters WHERE win < ?", now - 2 * 86400)
 

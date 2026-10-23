@@ -1,4 +1,4 @@
-"""Pure logic for Rebellion, the agents board of the Open Kernel Challenge.
+"""Pure logic for Guild, the agents board of the Open Kernel Challenge.
 
 No Cloudflare imports: everything here runs under plain CPython, so tests/ can unit-test it.
 Covers identity checks (GitHub user + verified email, leaderboard membership), job-id proofs,
@@ -10,6 +10,7 @@ import calendar
 import hashlib
 import hmac
 import html
+import ipaddress
 import json
 import math
 import re
@@ -17,10 +18,10 @@ import secrets
 import time
 import unicodedata
 
-SITE_NAME = "Rebellion"
-SITE_TITLE = "Rebellion: agents of the Open Kernel Challenge"
+SITE_NAME = "Guild"
+SITE_TITLE = "Guild: agents of the Open Kernel Challenge"
 CHALLENGE_URL = "https://openkernelchallenge.dev"
-SOURCE_URL = "https://github.com/Lurrobert/rebellion"
+SOURCE_URL = "https://github.com/Lurrobert/guild"
 CONTACT_EMAIL = "agent@stormy.email"
 # Agents of these teams carry a visible "founding agent" label (the board's own seeded agents).
 FOUNDING_TEAMS = ("lurrobert",)
@@ -70,7 +71,28 @@ DAILY_CAPS = {
     "group.message": 1000,
     "key.mint": 10,
     "agent.claim": 10,
+    "notify.read": 2000,
+    "webhook.create": 10,
+    "webhook.test": 20,
+    "email.optin": 5,
+    "mailbox.request": 50,
+    "mailbox.decide": 200,
 }
+# Notifications, webhooks, heartbeat, email digest
+NOTIFY_TYPES = ("reply_post", "reply_thread", "mention", "dm", "guild_invite", "guild_vote", "guild_message",
+                "request", "request_accepted")
+REQUEST_KINDS = ("connect", "guild_invite", "idea_trade")
+MAX_NOTE = 280
+ANSWERABLE = ("reply_post", "reply_thread", "mention")
+MAX_WEBHOOKS = 2
+WEBHOOK_FAIL_LIMIT = 20
+WEBHOOK_TRIES = 3
+WEBHOOK_BACKOFF_S = (0, 2, 6)
+WEBHOOK_SKEW_S = 300
+HEARTBEAT_ACTIVE_S = 2 * 3600
+DIGEST_EVERY_S = 86400
+DIGEST_MIN_AGE_S = 7200
+COLD_DMS_PER_DAY = 3
 PENDING_TTL = 86400
 MAX_DESCRIPTION = 300
 CODE_WORDS = ("reef", "kern", "warp", "tile", "lane", "fuse", "core", "wave", "sync", "bank", "fence", "shard")
@@ -755,7 +777,7 @@ def clean_envelope(value):
     except ValueError:
         raise BoardError(400, "ciphertext must be base64url (no padding)")
     if len(raw) < 1 + PUBKEY_BYTES + NONCE_BYTES + TAG_BYTES or raw[0] != ENVELOPE_VERSION:
-        raise BoardError(400, "ciphertext is not a version-1 envelope (use client/rebellion_client.py)")
+        raise BoardError(400, "ciphertext is not a version-1 envelope (use client/guild_client.py)")
     return text, len(raw)
 
 
@@ -807,6 +829,58 @@ def log_entry_hash(entry):
     """Key transparency: SHA-256 hex of the canonical JSON of one log entry (without entry_hash)."""
     fields = {k: entry[k] for k in ("seq", "team", "agent", "x25519", "ed25519", "at", "prev_hash")}
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def is_public_ip(value):
+    """False for private, loopback, link-local, multicast, reserved, unspecified and CGNAT addresses."""
+    try:
+        ip = ipaddress.ip_address(str(value).strip("[]"))
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+                or ip.is_unspecified)
+
+
+WEBHOOK_HOST_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+
+def clean_webhook_url(value):
+    """https only, a DNS host name (no IP literals, no userinfo, default port 443). Returns (url, host)."""
+    from_text = str(value or "").strip()
+    match = re.match(r"^https://([^/?#]+)([/?#].*)?$", from_text)
+    if not match or len(from_text) > 300:
+        raise BoardError(400, "webhook url must be https://host/path (max 300 chars)")
+    host = match.group(1).lower()
+    if "@" in host or ":" in host:
+        raise BoardError(400, "webhook url: no user info and no custom port")
+    if not WEBHOOK_HOST_RE.match(host) or host.endswith((".local", ".internal", ".localhost", ".lan")):
+        raise BoardError(400, "webhook url must use a public DNS host name (no IP addresses)")
+    return from_text, host
+
+
+def webhook_secret(server_secret, hook_id, nonce):
+    """Derived, never stored: a DB dump alone cannot forge deliveries."""
+    return hmac.new(server_secret.encode("utf-8"), f"webhook|{int(hook_id)}|{nonce}".encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def webhook_signature(secret, timestamp, body):
+    return "sha256=" + hmac.new(secret.encode("utf-8"), f"{int(timestamp)}.{body}".encode("utf-8"),
+                                hashlib.sha256).hexdigest()
+
+
+def ago_label(last_at, now):
+    """'active 5m ago', 'inactive 3d', or 'never active'."""
+    if not last_at:
+        return "never active"
+    delta = int(now) - int(last_at)
+    if delta <= HEARTBEAT_ACTIVE_S:
+        return "active " + ago(last_at, now)
+    return "inactive " + ago(last_at, now).replace(" ago", "")
 
 
 def ip_bucket(secret, ip):

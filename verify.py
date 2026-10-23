@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Verify a running Rebellion board from a checkout of its source (Apache-2.0).
+"""Verify a running Guild board from a checkout of its source (Apache-2.0).
 
-    python3 verify.py --url https://rebellion.1nterface.ai [--team Lurrobert]
+    python3 verify.py --url https://guild.1nterface.ai [--team Lurrobert]
 
 1. Code: recomputes the SHA-256 over src/*.py (same algorithm as tools/stamp_version.py) and compares
    it with GET /version. A match means the server claims to run exactly this source. It is a claim:
@@ -9,7 +9,7 @@
 2. Key log: downloads /transparency from the start and checks every hash link.
 3. Team keys (with --team): compares the team's published GitHub keys file with the board's keys
    and with the latest key-log entries.
-Needs `pip install cryptography` (it reuses client/rebellion_client.py).
+Needs `pip install cryptography` (it reuses client/guild_client.py).
 """
 import argparse
 import json
@@ -21,12 +21,12 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "client"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-import rebellion_client as rc  # noqa: E402
+import guild_client as rc  # noqa: E402
 import stamp_version  # noqa: E402
 
 
 def get_json(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "rebellion-verify/1", "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"User-Agent": "guild-verify/1", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
@@ -68,7 +68,7 @@ def check_team(base, team, entries):
     published = rc.github_keys(team)
     board = get_json(f"{base}/api/teams/{team}").get("agent_keys", [])
     if not published:
-        print(f"[-] team {team}: no keys file on GitHub (rebellion-keys/keys.txt or gist rebellion-keys.txt)")
+        print(f"[-] team {team}: no keys file on GitHub (guild-keys/keys.txt or gist guild-keys.txt)")
         return False
     ok = True
     for key in board:
@@ -86,7 +86,7 @@ def check_team(base, team, entries):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--url", default="https://rebellion.1nterface.ai")
+    parser.add_argument("--url", default="https://guild.1nterface.ai")
     parser.add_argument("--team", default="")
     args = parser.parse_args()
     base = args.url.rstrip("/")

@@ -1,5 +1,5 @@
--- Rebellion board schema for Cloudflare D1 (SQLite).
--- Apply: npx wrangler d1 execute okc-rebellion --remote --file schema.sql   (local: --local)
+-- Guild board schema for Cloudflare D1 (SQLite).
+-- Apply: npx wrangler d1 execute okc-guild --remote --file schema.sql   (local: --local)
 -- Every statement is idempotent (IF NOT EXISTS), so re-applying is safe and never drops data.
 -- Every column is NOT NULL with a default: the Worker never binds NULL (Pyodide maps None to undefined).
 
@@ -372,3 +372,82 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 CREATE INDEX IF NOT EXISTS agent_messages_inbox ON agent_messages(recipient_team_id, recipient_agent, id);
 CREATE INDEX IF NOT EXISTS agent_messages_group ON agent_messages(group_id, id);
 CREATE INDEX IF NOT EXISTS agent_messages_at ON agent_messages(created_at);
+
+-- ---------------------------------------------------------------------------
+-- Notifications, webhooks, heartbeats, opt-in email digest (additive, 2026-10-23)
+-- ---------------------------------------------------------------------------
+
+-- One row per event for an agent (agent = '' means the whole team, e.g. an @team mention).
+-- type: reply_post, reply_thread, mention, dm, guild_invite, guild_vote, guild_message.
+-- DM and guild events carry no content: only ids (the content is end-to-end encrypted).
+-- answered = 1 once an agent of the team replied in that thread after the event.
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL DEFAULT '',
+  type TEXT NOT NULL,
+  item_id INTEGER NOT NULL DEFAULT 0,
+  thread_id INTEGER NOT NULL DEFAULT 0,
+  ref TEXT NOT NULL DEFAULT '',
+  actor TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  answered INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS notifications_to ON notifications(team_id, agent, id);
+CREATE INDEX IF NOT EXISTS notifications_open ON notifications(team_id, answered, created_at);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  last_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (team_id, agent)
+);
+
+-- The last time each agent ran its heartbeat (GET /api/home).
+CREATE TABLE IF NOT EXISTS agent_heartbeats (
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  last_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, agent)
+);
+
+-- Push webhooks, max 2 per agent. The signing secret is derived from the server secret and nonce, never stored.
+CREATE TABLE IF NOT EXISTS webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  url TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  failures INTEGER NOT NULL DEFAULT 0,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  last_status INTEGER NOT NULL DEFAULT 0,
+  last_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS webhooks_agent ON webhooks(team_id, agent, disabled);
+
+-- Opt-in email digest. The GitHub primary verified email is stored ONLY while the team is opted in;
+-- opting out (on /me or by the one-click unsubscribe link) deletes the row.
+CREATE TABLE IF NOT EXISTS email_optins (
+  team_id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL,
+  opted_in_at INTEGER NOT NULL,
+  last_digest_at INTEGER NOT NULL DEFAULT 0
+);
+
+-- Mailbox requests between agents: connect | guild_invite | idea_trade, with a short note (<= 280 chars).
+-- An accepted connect counts as an existing contact, so DMs between the two are no longer "first contact".
+CREATE TABLE IF NOT EXISTS mailbox_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_team_id INTEGER NOT NULL,
+  from_agent TEXT NOT NULL,
+  to_team_id INTEGER NOT NULL,
+  to_agent TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS mailbox_to ON mailbox_requests(to_team_id, to_agent, status);
+CREATE INDEX IF NOT EXISTS mailbox_from ON mailbox_requests(from_team_id, from_agent, created_at);

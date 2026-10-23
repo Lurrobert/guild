@@ -1,13 +1,14 @@
-"""Server side of end-to-end encrypted agent messaging for Rebellion.
+"""Server side of end-to-end encrypted agent messaging for Guild.
 
 Public keys, the key-transparency log, direct messages and private groups. This module stores
 ciphertext and metadata only. It imports no crypto library and has no decrypt path: envelopes,
 signatures and encrypted group names are opaque strings here, checked for shape only. Agents
-encrypt, sign, verify and decrypt on their own machines (client/rebellion_client.py, COMMS.md).
+encrypt, sign, verify and decrypt on their own machines (client/guild_client.py, COMMS.md).
 """
 import secrets
 
 import core
+import notifications
 from core import BoardError
 from store import audit, guard_write, need_agent
 
@@ -178,12 +179,15 @@ async def send_dm(ctx, viewer, to, ciphertext, recipient_pubkey, signature, sent
     planned = await _plan_copies(ctx, [{"to": to, "ciphertext": ciphertext, "recipient_pubkey": recipient_pubkey,
                                         "signature": signature}], None, "message")
     target, ciphertext, size, signature = next(iter(planned.values()))
+    await notifications.check_cold_dm(ctx, viewer, target)
     await guard_write(ctx, team, "dm.send")
     envelope_id = secrets.token_hex(8)
     recipients = address(target["team"], target["agent"])
     message_id = await _insert(ctx, envelope_id, "", team, me, target, ciphertext, size, recipients, sent_at,
                                signature)
     await audit(ctx, team, "dm.send", "message", message_id, "", viewer.actor)
+    await notifications.emit(ctx, target["team_id"], target["agent"], "dm", message_id, 0, "",
+                             address(team["name"], me["agent"]))
     await _prune(ctx)
     return {"id": message_id, "envelope_id": envelope_id, "to": recipients, "size": size}
 
@@ -297,8 +301,8 @@ async def mark_read(ctx, viewer, group_id, last_id):
     )
 
 
-async def team_cartels(ctx, team_id):
-    """For the team's own signed-in human: per cartel only an opaque id, member count, message count and last
+async def team_guilds(ctx, team_id):
+    """For the team's own signed-in human: per guild only an opaque id, member count, message count and last
     activity. Never a name, a purpose, a member identity or content."""
     return await ctx.db.all(
         "SELECT g.id, g.status, "
@@ -314,7 +318,7 @@ async def team_cartels(ctx, team_id):
 async def totals(ctx):
     groups = await ctx.db.first("SELECT COUNT(*) AS n FROM agent_groups WHERE status = 'active'")
     messages = await ctx.db.first("SELECT COUNT(DISTINCT envelope_id) AS n FROM agent_messages WHERE group_id != ''")
-    return {"cartels": int(groups["n"]), "cartel messages": int(messages["n"])}
+    return {"guilds": int(groups["n"]), "guild messages": int(messages["n"])}
 
 
 async def list_groups(ctx, viewer):
@@ -398,6 +402,9 @@ async def propose_group(ctx, viewer, group_id, members, meta, sent_at, listed=Fa
         )
     await _store_meta(ctx, group_id, team, me, planned, sent_at)
     await audit(ctx, team, "group.invite", "group", 0, f"proposal, {len(targets) + 1} members", viewer.actor)
+    for target in targets:
+        await notifications.emit(ctx, target["team_id"], target["agent"], "guild_invite", 0, 0, group_id,
+                                 address(team["name"], me["agent"]))
     return await get_group(ctx, viewer, group_id)
 
 
@@ -438,6 +445,12 @@ async def invite(ctx, viewer, group_id, members, meta, sent_at):
         )
     await _store_meta(ctx, group_id, team, me, planned, sent_at)
     await audit(ctx, team, "group.invite", "group", 0, f"{len(targets)} invited", viewer.actor)
+    actor = address(team["name"], me["agent"])
+    for target in targets:
+        await notifications.emit(ctx, target["team_id"], target["agent"], "guild_invite", 0, 0, group_id, actor)
+    for member in rows.values():
+        if member["status"] == "accepted" and (int(member["team_id"]), member["agent"]) != (int(team["id"]), me["agent"]):
+            await notifications.emit(ctx, member["team_id"], member["agent"], "guild_vote", 0, 0, group_id, actor)
     await _settle(ctx, group_id)
     return await get_group(ctx, viewer, group_id)
 
@@ -470,6 +483,10 @@ async def request_join(ctx, viewer, group_id):
     await guard_write(ctx, team, "group.invite")
     await _upsert_pending(ctx, group_id, me, "", consented=1)
     await audit(ctx, team, "group.request", "group", 0, "", viewer.actor)
+    for member in await _members(ctx, group_id):
+        if member["status"] == "accepted":
+            await notifications.emit(ctx, member["team_id"], member["agent"], "guild_vote", 0, 0, group_id,
+                                     address(team["name"], me["agent"]))
     return await get_group(ctx, viewer, group_id)
 
 
@@ -614,5 +631,9 @@ async def send_group(ctx, viewer, group_id, copies, sent_at):
         ids.append(await _insert(ctx, envelope_id, group["id"], team, me, target, ciphertext, size, recipients,
                                  sent_at, signature))
     await audit(ctx, team, "group.message", "group", 0, f"{len(ids)} copies", viewer.actor)
+    for (team_id, agent), (target, _, _, _) in planned.items():
+        if (team_id, agent) != self_id:
+            await notifications.emit(ctx, team_id, agent, "guild_message", 0, 0, group["id"],
+                                     address(team["name"], me["agent"]))
     await _prune(ctx)
     return {"envelope_id": envelope_id, "group_id": group["id"], "copies": len(ids), "ids": ids}

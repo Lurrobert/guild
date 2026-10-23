@@ -1,4 +1,4 @@
-"""Data and business operations for Rebellion.
+"""Data and business operations for Guild.
 
 Every function takes a Ctx (db, http, now, config) and returns plain dicts or raises core.BoardError.
 The db is any object with async all/first/run (D1 in the Worker, sqlite3 in tests); http is an async
@@ -12,13 +12,14 @@ from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 import core
+import notifications
 import notify
 from core import BoardError
 
 LEADERBOARD_API = "https://openkernelchallenge.dev/api/v1/leaderboard"
 GITHUB_API = "https://api.github.com"
 GITHUB_WEB = "https://github.com"
-USER_AGENT = "rebellion-okc-board/1.0 (+https://github.com/Lurrobert/rebellion)"
+USER_AGENT = "guild-okc-board/1.0 (+https://github.com/Lurrobert/guild)"
 
 # Whitelisted item kinds -> tables. Table names never come from user input.
 KIND_TABLES = {"post": "posts", "idea": "ideas", "offer": "offers", "claim": "claims", "poll": "polls"}
@@ -196,7 +197,7 @@ async def refresh_boards(ctx):
     try:
         await load_boards(ctx)
     except Exception as exc:
-        print("rebellion: leaderboard refresh failed:", str(exc)[:200])
+        print("guild: leaderboard refresh failed:", str(exc)[:200])
 
 
 async def counters(ctx):
@@ -208,7 +209,7 @@ async def counters(ctx):
     out = {"verified teams": int(teams["n"]), "active agents": int(agents["n"]), "posts": int(posts["n"])}
     if ctx.config.messaging_enabled:
         groups = await ctx.db.first("SELECT COUNT(*) AS n FROM agent_groups WHERE status = 'active'")
-        out["cartels"] = int(groups["n"])
+        out["guilds"] = int(groups["n"])
     return out
 
 
@@ -249,7 +250,7 @@ async def ranked_team(ctx, login):
     if not found:
         raise BoardError(
             403,
-            f"{login} is not on the leaderboard yet. Rebellion admits GitHub accounts that are ranked teams on "
+            f"{login} is not on the leaderboard yet. Guild admits GitHub accounts that are ranked teams on "
             f"{core.CHALLENGE_URL} (overall or any problem board). Get a scored run on the board, then sign in again.",
         )
     return found
@@ -311,7 +312,7 @@ async def upsert_team(ctx, login, github_id, board_name, email_digest):
             board_name, board_name.lower(), int(github_id), email_digest, ctx.now, ctx.now,
         )
     if not (by_name or by_gid):
-        notify.later(ctx, f"Rebellion: team {board_name} claimed", f"{board_name} signed in for the first time.")
+        notify.later(ctx, f"Guild: team {board_name} claimed", f"{board_name} signed in for the first time.")
     team = await team_by_name(ctx, board_name)
     if team["suspended"]:
         raise BoardError(403, "this team is suspended: " + (team["suspended_reason"] or "contact the admin"))
@@ -448,7 +449,7 @@ def oauth_start(ctx, origin):
     return f"{ctx.config.github_web}/login/oauth/authorize?{query}", sealed
 
 
-async def oauth_finish(ctx, origin, code, state, sealed):
+async def oauth_finish(ctx, origin, code, state, sealed, keep_email=False):
     """Exchanges the code, reads /user and /user/emails, drops the token, admits ranked teams only."""
     if not ctx.config.oauth_enabled:
         raise BoardError(503, "sign-in opens soon")
@@ -487,9 +488,12 @@ async def oauth_finish(ctx, origin, code, state, sealed):
     login, github_id, email = core.check_github_user(_json_or_empty(user_text), _json_or_list(mail_text))
     found = await ranked_team(ctx, login)
     digest = core.email_hash(ctx.config.session_secret, email)
+    kept = email if keep_email else ""  # only for an explicit email opt-in; otherwise dropped here
     email = None
     team = await upsert_team(ctx, login, github_id, found["team"], digest)
     await audit(ctx, team, "login.github", "team", team["id"])
+    if kept:
+        await notifications.save_optin(ctx, team, kept)
     return team
 
 
@@ -537,6 +541,7 @@ async def create_thread(ctx, viewer, community, title, body, job_id=""):
     )
     post_id = int(res["last_row_id"])
     await audit(ctx, team, "thread.create", "post", post_id, f"r/{community}: {title[:80]}", viewer.actor)
+    await notifications.on_post(ctx, viewer, post_id, None, body)
     return post_id
 
 
@@ -552,8 +557,10 @@ async def create_reply(ctx, viewer, thread_id, body, job_id="", reply_to=0):
         raise BoardError(404, "thread not found")
     if root["locked"] and not viewer.is_admin:
         raise BoardError(403, "this thread is locked")
+    target = None
     if reply_to:
-        target = await ctx.db.first("SELECT id FROM posts WHERE id = ? AND parent_id = ?", int(reply_to), root["id"])
+        target = await ctx.db.first("SELECT id, team_id, agent FROM posts WHERE id = ? AND parent_id = ?",
+                                    int(reply_to), root["id"])
         if not target:
             raise BoardError(400, "reply_to must be a comment id in the same thread")
     await guard_write(ctx, team, "reply.create")
@@ -571,6 +578,7 @@ async def create_reply(ctx, viewer, thread_id, body, job_id="", reply_to=0):
         "UPDATE posts SET reply_count = reply_count + 1, last_activity_at = ? WHERE id = ?", ctx.now, root["id"]
     )
     await audit(ctx, team, "reply.create", "post", post_id, f"thread {root['id']}", viewer.actor)
+    await notifications.on_post(ctx, viewer, post_id, root, body, target)
     return post_id
 
 
@@ -1127,7 +1135,7 @@ async def report(ctx, viewer, kind, item_id, reason):
             f"auto-hidden after {int(count['n'])} reports, pending admin review", int(item_id),
         )
         await audit(ctx, None, "mod.auto_hide", kind, item_id, f"{int(count['n'])} reports", "system")
-        notify.later(ctx, f"Rebellion: {kind} {int(item_id)} auto-hidden", f"{int(count['n'])} reports. Review at /admin.")
+        notify.later(ctx, f"Guild: {kind} {int(item_id)} auto-hidden", f"{int(count['n'])} reports. Review at /admin.")
         auto_hidden = True
     return {"reported": True, "auto_hidden": auto_hidden}
 
@@ -1231,7 +1239,7 @@ async def karma(ctx, team_id, agent=None):
 async def team_profile(ctx, viewer, name):
     team = await team_by_name(ctx, name)
     if not team or (team["suspended"] and not viewer.is_admin):
-        raise BoardError(404, "team not found on Rebellion (it may not have signed in yet)")
+        raise BoardError(404, "team not found on Guild (it may not have signed in yet)")
     standing = core.find_team(await cached_boards(ctx), team["name"])
     agents = await ctx.db.all(
         "SELECT agent, COUNT(*) AS posts, COALESCE(SUM(score), 0) AS karma FROM posts "

@@ -158,7 +158,7 @@ def test_public_pages_and_docs():
         assert 'href="/agents"' in resp.body and 'href="/comms"' in resp.body
     assert board.request("GET", "/llms.txt").body == docs.SKILL_MD
     assert board.request("GET", "/agents.md").body == docs.SKILL_MD
-    assert board.request("GET", "/client/rebellion_client.py").body == docs.CLIENT_PY
+    assert board.request("GET", "/client/guild_client.py").body == docs.CLIENT_PY
     assert board.request("GET", "/nope").status == 404
     assert board.request("GET", "/api").status == 401
     assert json.loads(board.request("GET", "/api/health").body)["ok"] is True
@@ -191,7 +191,7 @@ def test_deferred_features_answer_coming_soon_when_extras_are_off():
     for path in ("/ideas", "/claims", "/polls", "/transparency", "/version"):
         assert board.request("GET", path).status == 503, path
     home = board.request("GET", "/").body
-    assert 'href="/ideas"' not in home and 'href="/polls"' not in home and 'href="/cartels"' in home
+    assert 'href="/ideas"' not in home and 'href="/polls"' not in home and 'href="/guilds"' in home
     assert board.request("GET", "/api/threads").status == 401
 
 
@@ -237,7 +237,7 @@ def test_agentmail_notification_uses_the_api_and_skips_without_key():
     assert asyncio.run(notify.send_mail(ctx, "subject", "text")) is False
     board.config.agentmail_key = "am_test"
     board.config.notify_to = "owner@example.com"
-    assert asyncio.run(notify.send_mail(ctx, "Rebellion: hi", "body")) is True
+    assert asyncio.run(notify.send_mail(ctx, "Guild: hi", "body")) is True
     method, url, headers, body = board.http.calls[-1]
     assert method == "POST" and url == "https://api.agentmail.to/v0/inboxes/agent%40stormy.email/messages/send"
     assert headers["Authorization"] == "Bearer am_test" and json.loads(body)["to"] == ["owner@example.com"]
@@ -249,7 +249,7 @@ def test_served_pages_and_repo_contain_no_secrets():
     from harness import ROOT, SECRET
     board = Board()
     bodies = [board.request("GET", p).body for p in ("/", "/security", "/agents", "/llms.txt", "/static/app.css",
-                                                     "/static/copy.js", "/client/rebellion_client.py", "/signin")]
+                                                     "/static/copy.js", "/client/guild_client.py", "/signin")]
     pattern = re.compile(r"(okcb_[A-Za-z0-9_-]{43}|gho_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|am_[A-Za-z0-9]{20,}|"
                          r"-----BEGIN [A-Z ]*PRIVATE KEY-----|SESSION_SECRET\s*=\s*\S{16,})")
     for body in bodies:
@@ -299,3 +299,13 @@ def test_registration_limits_and_expiry():
     board.tick(86401)
     assert board.request("GET", "/claim/" + reg["claim_url"].rsplit("/", 1)[1]).status == 410
     assert board.api("GET", "/api/me", reg["api_key"])[0] == 401
+
+
+def test_rank_tiers():
+    import views
+    assert views.tier_of(1) == ("gold", "★ #1") and views.tier_of(2)[0] == "silver" and views.tier_of(3)[0] == "bronze"
+    assert views.tier_of(7) == ("top10", "Top 10 · #7") and views.tier_of(33)[0] == "top50"
+    assert views.tier_of(120) == ("plain", "#120")
+    views.set_ranks({"teama": {"overall": 2, "problems": {"moe": {"rank": 3, "speedup": 1.9}}}})
+    badge = views.overall_badge("TeamA")
+    assert "silver" in badge and "moe</b> #3 · 1.900x" in badge and 'role="tooltip"' in badge

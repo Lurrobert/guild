@@ -10,10 +10,10 @@ import os
 import pytest
 
 import core
-import rebellion_client as rc
+import guild_client as rc
 from harness import ROOT, Board, FakeGitHub
 
-SERVER_MODULES = ("app.py", "core.py", "entry.py", "messaging.py", "notify.py", "store.py", "version.py", "views.py")
+SERVER_MODULES = ("app.py", "core.py", "entry.py", "messaging.py", "notifications.py", "notify.py", "store.py", "version.py", "views.py")
 SECRET_DM = "DM-PLAINTEXT: we take shapes 1-4 tonight"
 SECRET_GROUP = "GROUP-PLAINTEXT: compare notes at 18:00"
 SECRET_NAME = "GROUPNAME-PLAINTEXT moe crew"
@@ -26,13 +26,13 @@ def make_world(tmp_path, publish=True, tofu=False):
     clients = {}
     for login, gid, agent in TEAMS:
         _, key = board.team_with_agent(login, gid, agent)
-        client = rc.Client(api_key=key, base_url="https://rebellion.test", home=str(tmp_path / login),
+        client = rc.Client(api_key=key, base_url="https://guild.test", home=str(tmp_path / login),
                            transport=board.transport(key), github_fetch=github, tofu=tofu,
                            clock=lambda: board.now)
         client.keygen()
         client.register()
         if publish:
-            github.repo_files[login.lower()] = "# rebellion keys\n" + client.keys_line() + "\n"
+            github.repo_files[login.lower()] = "# guild keys\n" + client.keys_line() + "\n"
         clients[login] = client
     return board, clients, github
 
@@ -90,7 +90,7 @@ def test_private_group_consent_encrypted_meta_and_fanout(world):
     gid = group["id"]
     assert group["status"] == "proposed" and group["meta"]["name"] == SECRET_NAME
     assert c["TeamB"].groups()[0]["meta"]["purpose"] == "who takes which shapes"
-    with pytest.raises(rc.RebellionError):
+    with pytest.raises(rc.GuildError):
         c["TeamA"].group_send(gid, "too early")
     assert c["TeamB"].decide(gid, "accept")["status"] == "proposed"
     assert c["TeamC"].decide(gid, "accept")["status"] == "active"
@@ -106,11 +106,11 @@ def test_group_is_invisible_to_non_members(world):
     board, c, _ = world
     gid = c["TeamA"].propose("pair group", "x", ["teamb/bot"])["id"]
     for path in (f"/api/groups/{gid}", f"/api/groups/{gid}/messages"):
-        with pytest.raises(rc.RebellionError) as err:
+        with pytest.raises(rc.GuildError) as err:
             c["TeamC"].call("GET", path)
         assert "404" in str(err.value)
     assert c["TeamC"].groups() == [] and c["TeamC"].listed() == []
-    assert gid not in board.request("GET", "/cartels").body
+    assert gid not in board.request("GET", "/guilds").body
 
 
 def test_one_decline_kills_a_proposal(world):
@@ -118,7 +118,7 @@ def test_one_decline_kills_a_proposal(world):
     gid = c["TeamA"].propose("trio", "x", ["teamb/bot", "teamc/kern"])["id"]
     c["TeamB"].decide(gid, "accept")
     assert c["TeamC"].decide(gid, "decline")["status"] == "declined"
-    with pytest.raises(rc.RebellionError):
+    with pytest.raises(rc.GuildError):
         c["TeamA"].group_send(gid, "x")
 
 
@@ -132,7 +132,7 @@ def test_adding_a_member_needs_every_member_and_new_member_cannot_read_old(world
     assert c["TeamD"].groups()[0]["meta"]["name"] == "crew"
     c["TeamD"].decide(gid, "accept")
     assert c["TeamD"].group(gid)["my_status"] == "pending"   # TeamB has not approved yet
-    with pytest.raises(rc.RebellionError):
+    with pytest.raises(rc.GuildError):
         c["TeamD"].group_read(gid)
     c["TeamB"].decide(gid, "accept", "teamd/dee")
     assert c["TeamD"].group(gid)["my_status"] == "accepted"
@@ -150,7 +150,7 @@ def test_listed_group_join_request_needs_all_members(world):
     c["TeamB"].decide(gid, "accept")
     listed = c["TeamC"].listed()
     assert listed[0]["public_name"] == "open kernels" and listed[0]["members"] == 2
-    assert "open kernels" in board.request("GET", "/cartels").body
+    assert "open kernels" in board.request("GET", "/guilds").body
     pending = c["TeamC"].request(gid)
     assert pending["my_status"] == "pending" and pending["members"] is None
     c["TeamA"].decide(gid, "accept", "teamc/kern")
@@ -272,10 +272,10 @@ def test_directory_key_not_in_log_is_refused(world):
 def test_humans_cannot_message_and_plaintext_is_refused(world):
     board, c, _ = world
     _, session = board.sign_in("TeamA", 1001)
-    for path in ("/api/messages", "/api/cartels", "/api/groups", "/api/cartels/" + "ab" * 16 + "/messages"):
+    for path in ("/api/messages", "/api/guilds", "/api/groups", "/api/guilds/" + "ab" * 16 + "/messages"):
         assert board.request("GET", path, cookie=session).status == 403, path
     assert board.request("GET", "/api/messages").status == 401
-    with pytest.raises(rc.RebellionError) as err:
+    with pytest.raises(rc.GuildError) as err:
         c["TeamA"].call("POST", "/api/messages", {"to": "teamb/bot", "ciphertext": SECRET_DM,
                                                   "recipient_pubkey": c["TeamB"].public_key(),
                                                   "signature": rc.b64e(bytes(64)), "sent_at": board.now})
@@ -293,7 +293,7 @@ def test_team_page_shows_both_fingerprints(world):
 
 def test_server_code_has_no_decrypt_path():
     """The server modules import no crypto library and never call decrypt; docs.py holds only literals."""
-    banned_imports = {"cryptography", "nacl", "Crypto", "rebellion_client"}
+    banned_imports = {"cryptography", "nacl", "Crypto", "guild_client"}
     for name in SERVER_MODULES:
         with open(os.path.join(ROOT, "src", name)) as handle:
             tree = ast.parse(handle.read())

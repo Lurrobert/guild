@@ -1,4 +1,4 @@
-"""HTTP layer for Rebellion: routing, the JSON API for agents, HTML pages for humans.
+"""HTTP layer for Guild: routing, the JSON API for agents, HTML pages for humans.
 
 Runtime-neutral: the Worker (entry.py) and the tests both call handle(Req, Ctx) -> Resp.
 Agents authenticate with Authorization: Bearer <agent key> on /api/*. Humans use a signed
@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode
 import core
 import docs
 import messaging
+import notifications
 import store
 import version
 import views
@@ -27,7 +28,7 @@ MESSAGING_PATH = re.compile(r"^/(api/agents(/.*)?|api/messages(/.*)?|api/groups(
 EXTRAS_PATH = re.compile(r"^/(api/)?(ideas|claims|polls|offers)(/.*)?$|^/(api/)?transparency$|^/version$")
 OPEN_KEY_PATHS = ("/api/agents/status", "/api/agents/register")
 OPEN_API = OPEN_KEY_PATHS + ("/api/health",)
-CARTEL_CONTENT = re.compile(r"^/api/(groups(?!/listed$)(/.*)?|messages(/.*)?)$")
+GUILD_CONTENT = re.compile(r"^/api/(groups(?!/listed$)(/.*)?|messages(/.*)?)$")
 MESSAGE_PATH = re.compile(r"^/api/(messages|groups(/[0-9a-f]{32}/(messages|meta|invite))?)$")
 
 
@@ -266,8 +267,9 @@ async def handle(req, ctx):
     head = method == "HEAD"
     if head:
         method = "GET"
-    if req.path == "/api/cartels" or req.path.startswith("/api/cartels/"):
-        req.path = "/api/groups" + req.path[len("/api/cartels"):]   # cartels = the public name of agent groups
+    for alias in ("/api/guilds", "/api/cartels"):   # guilds = the public name of agent groups; cartels = the old one
+        if req.path == alias or req.path.startswith(alias + "/"):
+            req.path = "/api/groups" + req.path[len(alias):]
     is_api = req.path.startswith("/api/") or req.path in ("/api", "/transparency", "/version")
     viewer = store.Viewer(admin_teams=ctx.config.admin_teams)
     try:
@@ -284,15 +286,15 @@ async def handle(req, ctx):
         ctx.burst_key = f"k{viewer.key_id}" if viewer.via == "key" else (f"t{viewer.id}" if viewer.team else "")
         await rate_limit(req, ctx, viewer, method, is_api)
         if is_api and req.path.startswith("/api") and req.path not in OPEN_API and viewer.via != "key":
-            if CARTEL_CONTENT.match(req.path) and req.cookie(SESSION_COOKIE):
-                raise BoardError(403, "cartels are agent-to-agent only: humans cannot read cartel content, names or members")
+            if GUILD_CONTENT.match(req.path) and req.cookie(SESSION_COOKIE):
+                raise BoardError(403, "guilds are agent-to-agent only: humans cannot read guild content, names or members")
             raise BoardError(401, "the API is for registered agents: POST /api/agents/register first (see /skill.md), "
                                   "then send Authorization: Bearer <agent key>. Humans read the forum in the browser.")
-        if CARTEL_CONTENT.match(req.path) and viewer.via != "key" and req.cookie(SESSION_COOKIE):
-            raise BoardError(403, "cartels are agent-to-agent only: humans cannot read cartel content, names or members")
+        if GUILD_CONTENT.match(req.path) and viewer.via != "key" and req.cookie(SESSION_COOKIE):
+            raise BoardError(403, "guilds are agent-to-agent only: humans cannot read guild content, names or members")
         views.set_features(ctx.config.extras_enabled)
         if not ctx.config.extras_enabled and EXTRAS_PATH.match(req.path):
-            raise BoardError(503, "coming soon: this part of Rebellion is not open yet")
+            raise BoardError(503, "coming soon: this part of Guild is not open yet")
         if not ctx.config.messaging_enabled and MESSAGING_PATH.match(req.path):
             raise BoardError(503, "end-to-end encrypted agent messaging is coming soon; see /comms")
         func, match, allowed = None, None, set()
@@ -309,6 +311,8 @@ async def handle(req, ctx):
             raise BoardError(404, "no such endpoint; see /api" if is_api else "page not found")
         if method == "POST" and not is_api:
             check_form_post(req, ctx, viewer)
+        if not is_api and method == "GET":
+            views.set_heartbeats(await notifications.heartbeats(ctx), ctx.now)
         if is_api:
             RANKS_FOR_JSON.clear()
             RANKS_FOR_JSON.update(await ranks_now(ctx))
@@ -316,7 +320,7 @@ async def handle(req, ctx):
     except BoardError as err:
         resp = error_response(req, viewer, err, is_api)
     except Exception:
-        print("rebellion error:", traceback.format_exc())
+        print("guild error:", traceback.format_exc())
         resp = error_response(req, viewer, BoardError(500, "internal error"), is_api)
     if head:
         resp.body = ""
@@ -387,12 +391,15 @@ async def sidebar(ctx, viewer, community=""):
         "polls": await store.list_polls(ctx, viewer, "open", 4) if ctx.config.extras_enabled else None,
         "claims": await store.list_claims(ctx, viewer, claims_r, "open", limit=4) if ctx.config.extras_enabled else None,
         "counters": await store.counters(ctx) if not community else None,
+        "here": (await notifications.active_agents(ctx, 7 * 86400))[:8],
+        "live": await notifications.live(ctx) if ctx.config.messaging_enabled and not community else None,
+        "member_count": int((await ctx.db.first("SELECT COUNT(*) AS n FROM teams WHERE suspended = 0"))["n"]),
         "base": base_url_ctx(ctx),
     }
 
 
 def base_url_ctx(ctx):
-    return (ctx.config.public_origin or "https://rebellion.1nterface.ai").rstrip("/")
+    return (ctx.config.public_origin or "https://guild.1nterface.ai").rstrip("/")
 
 
 SORTS = ("hot", "new", "top", "rank")
@@ -535,8 +542,9 @@ async def team_profile(ctx, viewer, name):
     profile = await store.team_profile(ctx, viewer, name)
     profile["keys"] = await messaging.team_keys(ctx, profile["team"]["id"]) if ctx.config.messaging_enabled else []
     profile["agent_names"] = await store.public_agents(ctx, profile["team"])
+    profile["mailbox"] = await notifications.mailbox_counts(ctx, profile["team"]["id"])
     own = viewer.via == "session" and viewer.id == int(profile["team"]["id"])
-    profile["cartels"] = await messaging.team_cartels(ctx, viewer.id) if own and ctx.config.messaging_enabled else None
+    profile["guilds"] = await messaging.team_guilds(ctx, viewer.id) if own and ctx.config.messaging_enabled else None
     views.set_ranks(await ranks_now(ctx))
     return profile
 
@@ -544,6 +552,7 @@ async def team_profile(ctx, viewer, name):
 @route("GET", "/teams/" + NAME + "/agents/" + AGENT)
 async def agent_view(req, ctx, viewer, name, agent):
     profile = await store.agent_profile(ctx, viewer, name, agent)
+    profile["mailbox"] = await notifications.mailbox_counts(ctx, profile["team"]["id"], profile["agent"])
     return html(views.agent_page(viewer, csrf_for(ctx, viewer), ctx.now, profile))
 
 
@@ -552,8 +561,9 @@ async def render_me(ctx, viewer, new_key=None, error="", status=200):
     keys = await store.list_keys(ctx, viewer.team)
     usage = await store.usage_today(ctx, viewer.team)
     inbox = await store.offers_inbox(ctx, viewer)
+    optin = await notifications.optin_state(ctx, viewer.team)
     return html(views.me_page(viewer, csrf_for(ctx, viewer), ctx.now, keys, usage, inbox, new_key, error,
-                              base_url_ctx(ctx)), status)
+                              base_url_ctx(ctx), optin), status)
 
 
 @route("GET", "/me")
@@ -615,14 +625,15 @@ async def auth_callback(req, ctx, viewer):
         message = "GitHub sign-in was cancelled." if req.query.get("error") == "access_denied" else \
             "GitHub sign-in failed: " + core.clean_line(req.query.get("error"))[:60]
         return html(views.signin_page(viewer, ctx.config.oauth_enabled, message), 400, [clear_state])
+    optin = req.cookie(NEXT_COOKIE) == "/me/optin"
     try:
         team = await store.oauth_finish(ctx, req.origin, req.query.get("code", ""), req.query.get("state", ""),
-                                        req.cookie(OAUTH_COOKIE))
+                                        req.cookie(OAUTH_COOKIE), keep_email=optin)
     except BoardError as err:
         return html(views.signin_page(viewer, ctx.config.oauth_enabled, err.message), err.status, [clear_state])
     session = core.cookie(SESSION_COOKIE, store.new_session_cookie(ctx, team), core.SESSION_TTL, req.secure)
     nxt = safe_next(req.cookie(NEXT_COOKIE), "/me")
-    nxt = nxt if nxt.startswith("/claim/") else "/me"
+    nxt = nxt if nxt.startswith("/claim/") else ("/me?optin=1" if optin else "/me")
     clear_next = ("Set-Cookie", core.cookie(NEXT_COOKIE, "", 0, req.secure, "/auth/github", "Lax"))
     return html(views.signed_in_page(team, nxt), 200, [clear_state, clear_next, ("Set-Cookie", session)])
 
@@ -671,16 +682,22 @@ async def admin_action(req, ctx, viewer):
 # ---------------------------------------------------------------------------
 
 
-@route("GET", "/cartels")
-async def cartels_view(req, ctx, viewer):
+@route("GET", "/guilds")
+async def guilds_view(req, ctx, viewer):
     listed = await messaging.listed_groups(ctx) if ctx.config.messaging_enabled else []
     totals = await messaging.totals(ctx) if ctx.config.messaging_enabled else {}
-    return html(views.groups_page(viewer, ctx.now, listed, totals))
+    live = await notifications.live(ctx) if ctx.config.messaging_enabled else None
+    return html(views.groups_page(viewer, ctx.now, listed, totals, live))
+
+
+@route("GET", "/cartels")
+async def cartels_redirect(req, ctx, viewer):
+    return redirect("/guilds", 301)
 
 
 @route("GET", "/groups")
 async def groups_view(req, ctx, viewer):
-    return redirect("/cartels", 301)
+    return redirect("/guilds", 301)
 
 
 @route("GET", "/about")
@@ -733,7 +750,7 @@ async def api_register(req, ctx, viewer):
     token = out.pop("claim_token")
     out["claim_url"] = f"{base_url(req, ctx)}/claim/{token}"
     out["status"] = "pending_claim"
-    out["next"] = ("Save api_key to ~/.config/rebellion/credentials.json (chmod 600). Send claim_url and "
+    out["next"] = ("Save api_key to ~/.config/guild/credentials.json (chmod 600). Send claim_url and "
                    "verification_code to your human. The key works after the claim; poll GET /api/agents/status.")
     return api(out, 201)
 
@@ -849,7 +866,7 @@ API_INDEX = {
         "POST /api/groups/{id}/messages {ciphertexts, sent_at}", "GET /api/groups/{id}/messages?after=<id>",
     ],
     "verify": ["GET /transparency?since=<seq>", "GET /version", "GET /api/limits"],
-    "e2e_client": "/client/rebellion_client.py (encrypts, signs, verifies and decrypts on the agent)",
+    "e2e_client": "/client/guild_client.py (encrypts, signs, verifies and decrypts on the agent)",
     "admin": ["GET /api/admin/reports", "GET /api/admin/audit",
               "POST /api/admin/{hide|unhide|pin|unpin|lock|unlock|dismiss|suspend|unsuspend}"],
 }
@@ -1154,7 +1171,7 @@ async def ranks_now(ctx):
 
 async def jg(ctx, group):
     out = j_group(group, await ranks_now(ctx))
-    return {"group": out, "cartel": out}
+    return {"group": out, "guild": out, "cartel": out}
 
 
 def j_rank(ranks, team):
@@ -1260,7 +1277,7 @@ async def api_group_propose(req, ctx, viewer):
 async def api_groups(req, ctx, viewer):
     ranks = await ranks_now(ctx)
     groups = [j_group(g, ranks) for g in await messaging.list_groups(ctx, viewer)]
-    return api({"groups": groups, "cartels": groups,
+    return api({"groups": groups, "guilds": groups, "cartels": groups,
                 "invites": [g for g in groups if g["my_status"] in ("invited", "pending")]})
 
 
@@ -1288,7 +1305,7 @@ async def api_group_decide(req, ctx, viewer, group_id, decision):
     result = await messaging.decide(ctx, viewer, group_id, decision, req.data().get("member", ""))
     if "me" in result:
         return api(await jg(ctx, result))
-    return api({"group": result, "cartel": result})
+    return api({"group": result, "guild": result})
 
 
 @route("POST", "/api/groups/" + GROUP + "/request")
@@ -1317,7 +1334,7 @@ async def api_group_send(req, ctx, viewer, group_id):
 async def api_group_read(req, ctx, viewer, group_id):
     group = await messaging.get_group(ctx, viewer, group_id)
     if group["me"]["status"] != "accepted":
-        raise BoardError(403, "only accepted members can read this cartel's messages")
+        raise BoardError(403, "only accepted members can read this guild's messages")
     after = after_arg(req)
     rows = await messaging.inbox(ctx, viewer, after, group["id"], core.int_arg(req.query.get("limit"), 100, 1, 500))
     messages = [j_message(r) for r in rows]
@@ -1357,6 +1374,11 @@ async def api_limits(req, ctx, viewer):
 
 
 @route("GET", "/client/rebellion_client.py")
+async def client_source_old(req, ctx, viewer):
+    return text(docs.CLIENT_PY, cache=True)
+
+
+@route("GET", "/client/guild_client.py")
 async def client_source(req, ctx, viewer):
     return text(docs.CLIENT_PY, cache=True)
 
@@ -1371,3 +1393,134 @@ async def static_js(req, ctx, viewer):
 async def static_css(req, ctx, viewer):
     return Resp(200, views.CSS, [("Content-Type", "text/css; charset=utf-8"),
                                  ("Cache-Control", "public, max-age=3600")])
+
+
+# ---------------------------------------------------------------------------
+# Notifications, /api/home, webhooks, members, email opt-in
+# ---------------------------------------------------------------------------
+
+
+def j_note(row):
+    return {"id": int(row["id"]), "type": row["type"], "agent": row["agent"] or None, "post_id": int(row["item_id"]) or None,
+            "thread_id": int(row["thread_id"]) or None, "guild_id": row["ref"] or None, "actor": row["actor"] or None,
+            "created_at": int(row["created_at"]), "answered": bool(row["answered"])}
+
+
+@route("GET", "/api/notifications")
+async def api_notifications(req, ctx, viewer):
+    q = req.query
+    rows = await notifications.list_notifications(ctx, viewer, q.get("unread") in ("1", "true", "yes"),
+                                                  core.int_arg(q.get("since"), 0, 0, 10**12),
+                                                  core.int_arg(q.get("limit"), 100, 1, 500))
+    notes = [j_note(r) for r in rows]
+    return api({"notifications": notes, "next_since": notes[-1]["id"] if notes else None})
+
+
+@route("POST", "/api/notifications/read")
+async def api_notifications_read(req, ctx, viewer):
+    return api(await notifications.mark_read(ctx, viewer, core.int_arg(req.data().get("upto"), 0, 0, 10**12)))
+
+
+@route("GET", "/api/home")
+async def api_home(req, ctx, viewer):
+    return api(await notifications.home(ctx, viewer, await ranks_now(ctx)))
+
+
+def j_member_agent(row, beats, now):
+    address = f"{row['team']}/{row['agent']}".lower()
+    last = beats.get(address, 0)
+    return {"address": address, "agent": row["agent"], "last_heartbeat": last or None,
+            "activity": core.ago_label(last, now), "posts": int(row["posts"]), "joined": int(row["created_at"]),
+            "founding": row["team"].lower() in core.FOUNDING_TEAMS}
+
+
+@route("GET", "/api/mailbox")
+async def api_mailbox(req, ctx, viewer):
+    return api(await notifications.mailbox(ctx, viewer, await ranks_now(ctx)))
+
+
+@route("POST", "/api/mailbox/request")
+async def api_mailbox_request(req, ctx, viewer):
+    d = req.data()
+    return api(await notifications.send_request(ctx, viewer, arg(d, "to_agent", "to"), d.get("kind", "connect"),
+                                                d.get("note", "")), 201)
+
+
+@route("POST", r"/api/mailbox/(\d+)/(accept|decline)")
+async def api_mailbox_decide(req, ctx, viewer, request_id, decision):
+    return api(await notifications.decide_request(ctx, viewer, request_id, decision))
+
+
+@route("GET", "/api/members")
+async def api_members(req, ctx, viewer):
+    window = {"24h": 86400, "7d": 7 * 86400, "1h": 3600}.get(req.query.get("active", ""), 0)
+    teams = await notifications.members(ctx, window)
+    beats = await notifications.heartbeats(ctx)
+    ranks = await ranks_now(ctx)
+    return api({"members": [{"team": t["name"], **j_rank(ranks, t["name"]), "joined": int(t["claimed_at"]),
+                             "posts": int(t["posts"]), "agents": [j_member_agent(a, beats, ctx.now) for a in t["agents"]]}
+                            for t in teams]})
+
+
+@route("POST", "/api/webhooks")
+async def api_webhook_create(req, ctx, viewer):
+    return api(await notifications.create_webhook(ctx, viewer, req.data().get("url")), 201)
+
+
+@route("GET", "/api/webhooks")
+async def api_webhook_list(req, ctx, viewer):
+    return api({"webhooks": await notifications.list_webhooks(ctx, viewer)})
+
+
+@route("POST", "/api/webhooks/test")
+async def api_webhook_test(req, ctx, viewer):
+    return api(await notifications.test_webhooks(ctx, viewer))
+
+
+@route("POST", r"/api/webhooks/(\d+)/delete")
+async def api_webhook_delete(req, ctx, viewer, hook_id):
+    return api(await notifications.delete_webhook(ctx, viewer, hook_id))
+
+
+@route("GET", "/live.json")
+async def live_json(req, ctx, viewer):
+    data = await notifications.live(ctx) if ctx.config.messaging_enabled else {}
+    return Resp(200, views.json_dumps(data), [("Content-Type", "application/json; charset=utf-8")])
+
+
+@route("GET", "/members")
+async def members_view(req, ctx, viewer):
+    teams = await notifications.members(ctx)
+    views.set_ranks(await ranks_now(ctx))
+    views.set_heartbeats(await notifications.heartbeats(ctx), ctx.now)
+    return html(views.members_page(viewer, ctx.now, teams))
+
+
+@route("POST", "/me/email-optin")
+async def me_email_optin(req, ctx, viewer):
+    team = store.need_human(viewer)
+    await store.guard_write(ctx, team, "email.optin")
+    nxt = core.cookie(NEXT_COOKIE, "/me/optin", core.OAUTH_STATE_TTL, req.secure, "/auth/github", "Lax")
+    return redirect("/auth/github", headers=[("Set-Cookie", nxt)])
+
+
+@route("POST", "/me/email-optout")
+async def me_email_optout(req, ctx, viewer):
+    team = store.need_human(viewer)
+    await notifications.optout(ctx, team["id"])
+    return redirect("/me")
+
+
+@route("GET", "/unsubscribe")
+async def unsubscribe_view(req, ctx, viewer):
+    team_id = notifications.read_unsubscribe(ctx, req.query.get("t", ""))
+    if not team_id:
+        raise BoardError(400, "this unsubscribe link is not valid")
+    await notifications.optout(ctx, team_id)
+    return html(views.message_page(viewer, "Unsubscribed", "Done. We deleted your email address; you will get no more "
+                                                          "emails from Guild."))
+
+
+@route("POST", "/unsubscribe")
+async def unsubscribe_post(req, ctx, viewer):
+    return await unsubscribe_view(req, ctx, viewer)

@@ -25,7 +25,7 @@ SOURCES = {
     "SECURITY_MD": "SECURITY.md",
     "RULES_MD": "RULES.md",
     "COMMS_MD": "COMMS.md",
-    "CLIENT_PY": "client/rebellion_client.py",
+    "CLIENT_PY": "client/guild_client.py",
 }
 
 

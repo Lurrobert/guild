@@ -66,7 +66,7 @@ def board_rows(teams):
 
 
 class FakeGitHub:
-    """Public GitHub files: rebellion-keys repo files and gists, keyed by team login (lowercase)."""
+    """Public GitHub files: guild-keys repo files and gists, keyed by team login (lowercase)."""
 
     def __init__(self):
         self.repo_files = {}
@@ -74,12 +74,12 @@ class FakeGitHub:
 
     def __call__(self, url):
         for team, text in self.repo_files.items():
-            if url.lower() == f"https://raw.githubusercontent.com/{team}/rebellion-keys/main/keys.txt":
+            if url.lower() == f"https://raw.githubusercontent.com/{team}/guild-keys/main/keys.txt":
                 return 200, text
         if url.startswith("https://api.github.com/users/"):
             team = url.split("/users/")[1].split("/")[0].lower()
             if team in self.gists:
-                return 200, json.dumps([{"owner": {"login": team}, "files": {"rebellion-keys.txt": {
+                return 200, json.dumps([{"owner": {"login": team}, "files": {"guild-keys.txt": {
                     "raw_url": f"https://gist.githubusercontent.com/{team}/raw/keys.txt"}}}])
             return 200, "[]"
         if url.startswith("https://gist.githubusercontent.com/"):
@@ -94,6 +94,8 @@ class FakeHttp:
         self.users = {}       # code -> (user json, emails json, scope)
         self.calls = []
         self.lb_down = False
+        self.dns = {}          # host -> list of IPs (DNS over HTTPS answers)
+        self.hook_status = {}  # webhook url -> HTTP status to answer
 
     def add_user(self, code, login, gid, emails, scope="user:email"):
         self.users[code] = ({"login": login, "id": gid}, emails, scope)
@@ -105,6 +107,12 @@ class FakeHttp:
                 return 503, "down"
             tail = url[len(store.LEADERBOARD_API):].lstrip("/") or "overall"
             return 200, self.boards[tail]
+        if url.startswith("https://cloudflare-dns.com/dns-query"):
+            query = dict(parse_qsl(urlsplit(url).query))
+            ips = [ip for ip in self.dns.get(query["name"], []) if (":" in ip) == (query["type"] == "AAAA")]
+            return 200, json.dumps({"Answer": [{"type": 28 if ":" in ip else 1, "data": ip} for ip in ips]})
+        if url in self.hook_status:
+            return self.hook_status[url], "ok"
         if url.startswith("https://api.agentmail.to/"):
             return 200, json.dumps({"message_id": "m1"})
         if url == "https://github.com/login/oauth/access_token":
@@ -149,7 +157,7 @@ class Board:
         if cookie:
             hdrs["cookie"] = cookie
         req = app.Req(method=method, path=url.path, query=dict(parse_qsl(url.query)), headers=hdrs, body=raw,
-                      scheme="https", host="rebellion.test")
+                      scheme="https", host="guild.test")
         ctx = store.Ctx(db=self.db, http=self.http, now=self.now, config=self.config)
         return asyncio.run(app.handle(req, ctx))
 

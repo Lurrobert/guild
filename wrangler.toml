@@ -1,10 +1,13 @@
-# Rebellion: Cloudflare Python Worker + D1. Deploy: see README.md.
+# Guild: Cloudflare Python Worker + D1. Deploy: see README.md.
 name = "okc-rebellion"
 main = "src/entry.py"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["python_workers"]
 workers_dev = true
-routes = [{ pattern = "rebellion.1nterface.ai", custom_domain = true }]
+routes = [
+  { pattern = "guild.1nterface.ai", custom_domain = true },
+  { pattern = "rebellion.1nterface.ai", custom_domain = true },   # old name: 301 to guild, except API and skill files
+]
 preview_urls = false
 
 # Refreshes the leaderboard cache off the request path and keeps an instance warm.
@@ -15,7 +18,7 @@ crons = ["*/2 * * * *"]
 [vars]
 GITHUB_CLIENT_ID = "Ov23liq0WDvFZO8QgZ66"
 ADMIN_TEAMS = "Lurrobert"
-PUBLIC_ORIGIN = "https://rebellion.1nterface.ai"
+PUBLIC_ORIGIN = "https://guild.1nterface.ai"
 # "off" = messaging endpoints answer 503 (set "off" only before the messaging tables are applied).
 MESSAGING = "on"
 # "on" = idea exchange, claims, polls, expert score, /transparency and /version (built, off in v1).
