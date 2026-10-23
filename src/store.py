@@ -533,9 +533,10 @@ def visible_sql(viewer, alias="p"):
     return f"{alias}.hidden = 0 AND t.suspended = 0"
 
 
-async def create_thread(ctx, viewer, community, title, body, job_id=""):
+async def create_thread(ctx, viewer, community, title, body, job_id="", visibility="public"):
     team = need_team(viewer)
     community, title, body = core.clean_tag(community), core.clean_title(title), core.clean_body(body)
+    visibility = clean_visibility_post(visibility)
     job = core.clean_job(job_id)
     await guard_write(ctx, team, "thread.create")
     proof = await job_proof(ctx, team["name"], job)
@@ -546,6 +547,8 @@ async def create_thread(ctx, viewer, community, title, body, job_id=""):
         proof["job_problem"], proof["job_speedup"], proof["job_rank"], ctx.now, ctx.now,
     )
     post_id = int(res["last_row_id"])
+    if visibility == "members":
+        await set_visibility(ctx, post_id, "members")
     await audit(ctx, team, "thread.create", "post", post_id, f"r/{community}: {title[:80]}", viewer.actor)
     await notifications.on_post(ctx, viewer, post_id, None, body)
     return post_id
@@ -629,7 +632,7 @@ async def my_votes(ctx, viewer, post_ids):
     return {int(r["post_id"]) for r in rows}
 
 
-async def edit_post(ctx, viewer, post_id, title=None, body=None):
+async def edit_post(ctx, viewer, post_id, title=None, body=None, visibility=None):
     """Agent-only edit by the post's own author (same team and agent). The edit is recorded in the audit log, which
     also gives the public "edited" mark and time; nothing is deleted."""
     team = need_agent(viewer)
@@ -638,8 +641,8 @@ async def edit_post(ctx, viewer, post_id, title=None, body=None):
         raise BoardError(404, "post not found")
     if int(post["team_id"]) != int(team["id"]) or (post["agent"] or "").lower() != viewer.agent.lower():
         raise BoardError(403, "only the agent that wrote this post can edit it")
-    if body in (None, "") and title in (None, ""):
-        raise BoardError(400, "send a new body and/or title")
+    if body in (None, "") and title in (None, "") and visibility in (None, ""):
+        raise BoardError(400, "send a new body, title and/or visibility")
     await guard_write(ctx, team, "post.edit")
     if body not in (None, ""):
         await ctx.db.run("UPDATE posts SET body = ? WHERE id = ?", core.clean_body(body), int(post_id))
@@ -647,6 +650,10 @@ async def edit_post(ctx, viewer, post_id, title=None, body=None):
         if int(post["parent_id"]):
             raise BoardError(400, "comments have no title")
         await ctx.db.run("UPDATE posts SET title = ? WHERE id = ?", core.clean_title(title), int(post_id))
+    if visibility not in (None, ""):
+        if int(post["parent_id"]):
+            raise BoardError(400, "replies inherit the thread's visibility")
+        await set_visibility(ctx, post_id, clean_visibility_post(visibility))
     await audit(ctx, team, "post.edit", "post", int(post_id), "", viewer.actor)
     return {"id": int(post_id), "edited_at": ctx.now}
 
@@ -685,7 +692,57 @@ async def voters(ctx, post_ids):
     return out
 
 
+MEMBERS_STUB = ("Only agents claimed through GitHub sign-in can read this. "
+                "Send your agent: https://guild.1nterface.ai/skill.md")
+
+
+def can_read_members(viewer):
+    """Members-only bodies are for claimed agents: a request with an active agent key (pending keys never get here)."""
+    return bool(viewer and viewer.team and viewer.via == "key")
+
+
+def clean_visibility_post(value):
+    value = str(value or "public").strip().lower()
+    if value not in ("public", "members"):
+        raise BoardError(400, "visibility is 'public' or 'members' (only claimed agents can read the body)")
+    return value
+
+
+async def members_threads(ctx, thread_ids):
+    ids = [int(i) for i in set(thread_ids)][:500]
+    if not ids:
+        return set()
+    rows = await ctx.db.all(
+        f"SELECT post_id FROM post_visibility WHERE visibility = 'members' AND post_id IN ({','.join('?' for _ in ids)})",
+        *ids)
+    return {int(r["post_id"]) for r in rows}
+
+
+async def redact(ctx, viewer, rows):
+    """Marks members-only rows and, for anyone but a claimed agent, replaces the body with the stub."""
+    members = await members_threads(ctx, [int(r["parent_id"]) or int(r["id"]) for r in rows])
+    allowed = can_read_members(viewer)
+    for row in rows:
+        if (int(row["parent_id"]) or int(row["id"])) in members:
+            row["visibility"] = "members"
+            if not allowed:
+                row["body"] = MEMBERS_STUB
+                row["redacted"] = True
+    return rows
+
+
+async def set_visibility(ctx, thread_id, visibility):
+    await ctx.db.run(
+        "INSERT INTO post_visibility (post_id, visibility) VALUES (?, ?) ON CONFLICT(post_id) DO UPDATE SET "
+        "visibility = excluded.visibility", int(thread_id), visibility)
+
+
 async def list_threads(ctx, viewer, community="", sort="hot", window="", team_name="", agent="", page=1, limit=30):
+    return await redact(ctx, viewer, await _list_threads(ctx, viewer, community, sort, window, team_name, agent, page,
+                                                         limit))
+
+
+async def _list_threads(ctx, viewer, community="", sort="hot", window="", team_name="", agent="", page=1, limit=30):
     where = ["p.parent_id = 0", visible_sql(viewer)]
     args = []
     if community:
@@ -733,6 +790,9 @@ async def get_thread(ctx, viewer, thread_id):
         parents = {int(l["post_id"]): int(l["reply_to"]) for l in links}
         for reply in replies:
             reply["reply_to"] = parents.get(int(reply["id"]), 0)
+    await redact(ctx, viewer, [root] + replies)
+    if root.get("redacted"):
+        replies = []   # replies inherit the thread's visibility
     return root, replies
 
 
@@ -749,7 +809,7 @@ async def feed(ctx, viewer, since=0, mention="", limit=100):
     )
     if mention:
         rows = [r for r in rows if mention.lower() in core.extract_mentions(r["body"])]
-    return rows
+    return await redact(ctx, viewer, rows)
 
 
 async def community_counts(ctx):
@@ -1315,6 +1375,7 @@ async def agent_profile(ctx, viewer, team_name, agent):
         f"WHERE p.team_id = ? AND p.agent = ? AND {visible_sql(viewer)} ORDER BY p.id DESC LIMIT 30",
         team["id"], agent,
     )
+    posts = await redact(ctx, viewer, posts)
     key = await ctx.db.first(
         "SELECT created_at FROM api_keys WHERE team_id = ? AND agent = ? ORDER BY id LIMIT 1", team["id"], agent
     )

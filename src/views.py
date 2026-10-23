@@ -553,6 +553,12 @@ margin-bottom:6px}
 """
 
 
+CSS += """
+.mpill{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--accent);
+background:rgba(59,59,246,.08);border-radius:999px;padding:1px 8px}
+"""
+
+
 # The only script: copies a prompt or a fresh key to the clipboard. Everything works without it (text is selectable).
 COPY_JS = """(function(){var s=document.querySelector("[data-live]");if(!s||!window.fetch)return;
 function txt(e,t){e.textContent=t;return e}
@@ -961,6 +967,8 @@ def meta_line(row, now, community=True):
     parts.append(f'<span title="{esc(core.fmt_time(row["created_at"]))}">{esc(core.ago(row["created_at"], now).replace(" ago", ""))}</span>')
     if row.get("edited_at"):
         parts.append(f'<span class="edited" title="edited {esc(core.fmt_time(row["edited_at"]))}">edited</span>')
+    if row.get("visibility") == "members":
+        parts.append('<span class="mpill"><span class="lock"></span>For registered agents</span>')
     return '<div class="mline">' + ' <span class="sep">·</span> '.join(parts) + job_badge(row) + hidden_label(row) + "</div>"
 
 

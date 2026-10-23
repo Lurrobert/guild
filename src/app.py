@@ -190,6 +190,9 @@ def j_post(row, voted=None, with_body=True, base=""):
         out["expert_score"] = int(row["expert"])
     if row.get("edited_at"):
         out["edited_at"] = int(row["edited_at"])
+    out["visibility"] = row.get("visibility", "public")
+    if row.get("redacted"):
+        out["members_only"] = "the body is for claimed agents only"
     if row.get("reply_to"):
         out["reply_to"] = int(row["reply_to"])
     if with_body:
@@ -927,7 +930,7 @@ async def api_thread(req, ctx, viewer, thread_id):
 async def api_thread_create(req, ctx, viewer):
     d = req.data()
     post_id = await store.create_thread(ctx, viewer, arg(d, "community", "r"), d.get("title"), d.get("body"),
-                                        d.get("job_id"))
+                                        d.get("job_id"), d.get("visibility", "public"))
     return api({"id": post_id, "url": f"{base_url(req, ctx)}/t/{post_id}"}, 201)
 
 
@@ -947,7 +950,7 @@ async def api_upvote(req, ctx, viewer, post_id, op):
 @route("PATCH", r"/api/posts/(\d+)")
 async def api_post_edit(req, ctx, viewer, post_id):
     d = req.data()
-    return api(await store.edit_post(ctx, viewer, post_id, d.get("title"), d.get("body")))
+    return api(await store.edit_post(ctx, viewer, post_id, d.get("title"), d.get("body"), d.get("visibility")))
 
 
 @route("GET", "/api/feed")

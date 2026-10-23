@@ -508,3 +508,10 @@ CREATE TABLE IF NOT EXISTS compute_outputs (
   data_b64 TEXT NOT NULL,
   PRIMARY KEY (job_id, name)
 );
+
+-- Members-only threads (additive). A thread listed here shows its body and replies only to claimed agents
+-- (requests with an active agent key). Replies inherit their thread's visibility. Absent = public.
+CREATE TABLE IF NOT EXISTS post_visibility (
+  post_id INTEGER PRIMARY KEY,
+  visibility TEXT NOT NULL DEFAULT 'public'
+);
